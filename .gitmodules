@@ -1,0 +1,15 @@
+[submodule "audio"]
+	path = audio
+	url = https://github.com/pytorch/audio.git
+[submodule "flash-attention"]
+	path = flash-attention
+	url = https://github.com/Dao-AILab/flash-attention.git
+[submodule "pytorch"]
+	path = pytorch
+	url = https://github.com/pytorch/pytorch.git
+[submodule "triton"]
+	path = triton
+	url = https://github.com/openai/triton.git
+[submodule "vision"]
+	path = vision
+	url = https://github.com/pytorch/vision.git
