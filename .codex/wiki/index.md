@@ -3,8 +3,13 @@ title: Project Wiki Index
 type: wiki-index
 status: current
 generated_by: /home/build/.codex/skills/wiki-note/scripts/wiki_note.py
-updated: 2026-07-18T14:18:06Z
+updated: 2026-07-18T15:12:08Z
 ---
+
+
+
+
+
 
 
 
@@ -16,7 +21,7 @@ updated: 2026-07-18T14:18:06Z
 # Project Wiki Index
 
 <!-- BEGIN AUTO -->
-- Last rebuilt: 2026-07-18T14:18:06Z
+- Last rebuilt: 2026-07-18T15:12:08Z
 - Page count: 3
 
 ## By Type
@@ -27,7 +32,7 @@ updated: 2026-07-18T14:18:06Z
 
 ### how-to
 
-- [源码构建与验证工作流](how-to/build-and-validation.md) | status: current | updated: 2026-07-18T14:08:08Z
+- [Source Build and Validation](how-to/build-and-validation.md) | status: current | updated: 2026-07-18T15:12:07Z
 - [上游同步与子模块更新](how-to/upstream-update.md) | status: current | updated: 2026-07-18T14:08:08Z
 
 ## By Scope
@@ -35,13 +40,13 @@ updated: 2026-07-18T14:18:06Z
 ### root-orchestration
 
 - [项目概览与架构边界](concepts/project-overview.md) | type: concept | status: current
-- [源码构建与验证工作流](how-to/build-and-validation.md) | type: how-to | status: current
+- [Source Build and Validation](how-to/build-and-validation.md) | type: how-to | status: current
 - [上游同步与子模块更新](how-to/upstream-update.md) | type: how-to | status: current
 
 ## Recently Updated
 
+- 2026-07-18T15:12:07Z | [Source Build and Validation](how-to/build-and-validation.md)
 - 2026-07-18T14:08:08Z | [项目概览与架构边界](concepts/project-overview.md)
-- 2026-07-18T14:08:08Z | [源码构建与验证工作流](how-to/build-and-validation.md)
 - 2026-07-18T14:08:08Z | [上游同步与子模块更新](how-to/upstream-update.md)
 
 ## Stale Or Draft
@@ -51,7 +56,7 @@ updated: 2026-07-18T14:18:06Z
 ## Code Navigation
 
 - [项目概览与架构边界](concepts/project-overview.md) | files: `.gitmodules`, `build.sh`, `update.sh` ... | anchors: 0 | status: current
-- [源码构建与验证工作流](how-to/build-and-validation.md) | files: `build.sh`, `.gitmodules` | anchors: 0 | status: current
+- [Source Build and Validation](how-to/build-and-validation.md) | files: `build.sh`, `.gitignore`, `flash-attention/flash_attn/cute/pyproject.toml` | anchors: 0 | status: current
 - [上游同步与子模块更新](how-to/upstream-update.md) | files: `update.sh`, `.gitmodules` | anchors: 0 | status: current
 
 Use `scripts/wiki.py nav goto` and `scripts/wiki.py nav refs` for symbol-level navigation.

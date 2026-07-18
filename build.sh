@@ -1,522 +1,375 @@
 #!/usr/bin/env bash
-# Ubuntu 一键编译本地源码：PyTorch-Triton, PyTorch, Torchvision, Torchaudio (CUDA 13.1)
-# 请在源码目录 (./triton, ./pytorch, ./vision, ./audio) 的父目录运行
+# Build local PyTorch, Triton, Flash Attention 4, Torchvision, and Torchaudio sources for CUDA.
 set -euo pipefail
 
-# ----------------------------
-# 1. 全局配置 (可通过环境变量覆盖)
-# ----------------------------
-: "${BUILD_NUMBER:=$(date +%Y%m%d)}"    # 统一构建版本号
-: "${PYTHON:=/home/build/.venv/bin/python}"    # Python 可执行命令
-: "${MAX_JOBS:=12}"               # 全局最大并行编译线程数
-: "${USE_CLANG:=1}"                     # 使用 clang-21 (1=启用)
-: "${CLEAR_PIP_CACHE:=0}"              # 清除 pip 缓存(1=启用)
-: "${CLEAN_BUILD:=1}"                  # 清理旧构建(1=启用)
-: "${VERIFY_INSTALL:=1}"               # 验证安装(1=启用)
-: "${INSTALL_GLOBAL_PIP_DEPS:=1}"      # 安装全局 pip 依赖(1=启用)
+ROOT_DIR="$(pwd)"
 
-# 源码目录
-: "${PYTORCH_SOURCE_DIR:=./pytorch}"
-: "${VISION_SOURCE_DIR:=./vision}"
-: "${AUDIO_SOURCE_DIR:=./audio}"
-: "${TRITON_SOURCE_DIR:=./triton}"
+# Optional local configuration. Keep this trusted shell-compatible KEY=VALUE file local.
+: "${ENV_FILE:=${ROOT_DIR}/.env}"
+[[ -f "${ENV_FILE}" ]] || {
+  printf 'ERROR: local build configuration is unavailable: %s\n' "${ENV_FILE}" >&2
+  exit 1
+}
+set -a
+# shellcheck source=/dev/null
+source "${ENV_FILE}"
+set +a
 
-# 日志文件
-MAIN_LOG="$(pwd)/alltorch_build.log"
-TRITON_BUILD_LOG="$(pwd)/triton_build.log"
-PYTORCH_BUILD_LOG="$(pwd)/pytorch_build.log"
-VISION_BUILD_LOG="$(pwd)/vision_build.log"
-AUDIO_BUILD_LOG="$(pwd)/audio_build.log"
-> "${MAIN_LOG}"
-> "${TRITON_BUILD_LOG}"
-> "${PYTORCH_BUILD_LOG}"
-> "${VISION_BUILD_LOG}"
-> "${AUDIO_BUILD_LOG}"
+MAIN_LOG="${ROOT_DIR}/alltorch_build.log"
+TRITON_BUILD_LOG="${ROOT_DIR}/triton_build.log"
+PYTORCH_BUILD_LOG="${ROOT_DIR}/pytorch_build.log"
+FLASH_ATTENTION_BUILD_LOG="${ROOT_DIR}/flash_attention_build.log"
+VISION_BUILD_LOG="${ROOT_DIR}/vision_build.log"
+AUDIO_BUILD_LOG="${ROOT_DIR}/audio_build.log"
+
+for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
+  : >"$log_file"
+done
 
 die() {
-  echo "❌ $*" | tee -a "${MAIN_LOG}" >&2
+  printf 'ERROR: %s\n' "$*" | tee -a "$MAIN_LOG" >&2
   exit 1
 }
 
+require_configuration() {
+  local variable
+  local -a required_variables=(
+    BUILD_NUMBER PYTHON MAX_JOBS USE_CLANG CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
+    INSTALL_BUILD_PYTHON_DEPS PYTORCH_SOURCE_DIR VISION_SOURCE_DIR AUDIO_SOURCE_DIR
+    TRITON_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
+    FLASH_ATTENTION_WHEEL_DIR CUDA_HOME MAGMA_ROOT OPENMPI_ROOT NVCODEC_HOME
+    LLVM_CONFIG_PATH LLVM_SYSPATH PYTORCH_BUILD_VERSION VISION_BUILD_VERSION
+    AUDIO_BUILD_VERSION
+  )
+
+  for variable in "${required_variables[@]}"; do
+    [[ -n "${!variable:-}" ]] || die "Missing required configuration in $ENV_FILE: $variable"
+  done
+}
+
 log() {
-  echo -e "$*" | tee -a "${MAIN_LOG}"
+  printf '%s\n' "$*" | tee -a "$MAIN_LOG"
+}
+
+section() {
+  log ""
+  log "=== $* ==="
 }
 
 run_with_log() {
   local log_file="$1"
   shift
-  "$@" 2>&1 | tee -a "${log_file}"
+  "$@" 2>&1 | tee -a "$log_file"
 }
 
 require_cmd() {
-  command -v "$1" &>/dev/null || die "缺少命令: $1"
+  command -v "$1" >/dev/null 2>&1 || die "Missing command: $1"
 }
 
-# ----------------------------
-# 2. 环境准备
-# ----------------------------
-echo -e "\n=== [ALL] 配置全局编译环境 ===" | tee -a "${MAIN_LOG}"
+require_source() {
+  local name="$1"
+  local source_dir="$2"
+  [[ -d "$source_dir" && -f "$source_dir/setup.py" ]] || die "$name source is unavailable: $source_dir"
+}
 
-# 基础命令检查
-if [[ -x "${PYTHON}" ]]; then
-  :
-elif command -v "${PYTHON}" &>/dev/null; then
-  :
-else
-  die "Python 不可用: ${PYTHON}"
-fi
-require_cmd git
-require_cmd cmake
-require_cmd ninja
-require_cmd gcc
-require_cmd nvcc
-require_cmd nvidia-smi
-export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-export PYTHON_HOME="${PYTHON_HOME:-/home/build/.venv}"
-export WSL_HOME="/usr/lib/wsl"
-export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.1}"
-export MAGMA_ROOT="${MAGMA_ROOT:-/usr/local/magma}"
-export OPENMPI_ROOT="${OPENMPI_ROOT:-/usr/local/ompi}"
-export NVCODEC_HOME="${NVCODEC_HOME:-/usr/local/nvcodec}"
+require_directory() {
+  local name="$1"
+  local source_dir="$2"
+  [[ -d "$source_dir" ]] || die "$name source is unavailable: $source_dir"
+}
 
-export PATH="${PYTHON_HOME}/bin:${WSL_HOME}/lib:${CUDA_HOME}/bin:${OPENMPI_ROOT}/bin:${PATH:-}"
-export LD_LIBRARY_PATH="${PYTHON_HOME}/lib64:${WSL_HOME}/lib:${CUDA_HOME}/lib64:${MAGMA_ROOT}/lib:${OPENMPI_ROOT}/lib:${NVCODEC_HOME}/lib:${LD_LIBRARY_PATH:-}"
+clean_source() {
+  local name="$1"
+  local source_dir="$2"
 
-# 打印版本信息
-{
-    echo -n "PATH:"           ; echo "${PATH}" | tr ':' '\n' | sed 's/^/  /'
-    echo -n "LD_LIBRARY_PATH:"; echo "${LD_LIBRARY_PATH}" | tr ':' '\n' | sed 's/^/  /'
-    echo -n "Python:     "; $PYTHON --version
-    echo -n "GCC:        "; gcc -dumpfullversion -dumpversion
-    echo -n "Clang:      "; clang-21 --version | head -n1
-    echo -n "CMake:      "; cmake --version | head -n1
-    echo -n "Ninja:      "; ninja --version
-    echo -n "nvcc:       "; nvcc --version | grep "release"
-    echo -n "nvidia-smi: "; nvidia-smi --query-gpu=driver_version,name --format=csv,noheader
-    echo -n "Git:        "; git --version
-    echo -e "=====================\n"
-} | tee -a "${MAIN_LOG}"
-
-# 启用 ccache
-if command -v ccache &>/dev/null; then
-  echo "✅ 启用 ccache 编译缓存" | tee -a "${MAIN_LOG}"
-  export CCACHE_ROOT="/usr/lib/ccache"
-  export PATH="${CCACHE_ROOT}:${PATH}"
-
-  # 确保nvcc通过ccache调用
-  if [[ -d "${CCACHE_ROOT}" ]]; then
-  # 检查是否已有nvcc链接，如果没有则创建
-    if [[ ! -e "${CCACHE_ROOT}/nvcc" ]]; then
-      echo "✅ 创建nvcc到ccache的链接" | tee -a "${MAIN_LOG}"
-      if command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
-        sudo ln -sf /usr/bin/ccache "${CCACHE_ROOT}/nvcc"
-      else
-        echo "⚠️ 无法无密码 sudo，跳过创建 nvcc 链接" | tee -a "${MAIN_LOG}"
-      fi
-    fi
+  if [[ "$CLEAN_BUILD" != "1" ]]; then
+    log "[$name] keeping existing build outputs (CLEAN_BUILD=0)"
+    return
   fi
+
+  log "[$name] removing untracked build outputs"
+  if [[ -d "$source_dir/.git" ]]; then
+    git -C "$source_dir" clean -ffdx
+  else
+    rm -rf "$source_dir/build" "$source_dir/dist" "$source_dir"/*.egg-info "$source_dir/.eggs"
+  fi
+}
+
+install_wheels() {
+  local source_dir="$1"
+  local package_name="$2"
+  shift 2
+  local -a wheels=("$source_dir"/dist/*.whl)
+
+  compgen -G "$source_dir/dist/*.whl" >/dev/null || die "[$package_name] no wheel produced in $source_dir/dist"
+  run_with_log "$MAIN_LOG" "$PYTHON" -m pip install "$@" "${wheels[@]}"
+}
+
+configure_paths() {
+  export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+  export PATH="${CUDA_HOME}/bin:${OPENMPI_ROOT}/bin:${PATH}"
+  export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${MAGMA_ROOT}/lib:${OPENMPI_ROOT}/lib:${NVCODEC_HOME}/lib:${LD_LIBRARY_PATH:-}"
+}
+
+configure_compiler() {
+  if [[ "$USE_CLANG" == "1" ]]; then
+    require_cmd clang-21
+    require_cmd clang++-21
+    export CC=clang-21 CXX=clang++-21
+    log "Using clang-21"
+  else
+    export CC=gcc CXX=g++
+    log "Using GCC"
+  fi
+}
+
+configure_ccache() {
+  if ! command -v ccache >/dev/null 2>&1; then
+    log "ccache not found; continuing without compiler cache"
+    return
+  fi
+
   export CMAKE_C_COMPILER_LAUNCHER=ccache
   export CMAKE_CXX_COMPILER_LAUNCHER=ccache
   export CMAKE_CUDA_COMPILER_LAUNCHER=ccache
   ccache -z
-  # 验证nvcc是否通过ccache调用
-  if [[ "$(which nvcc 2>/dev/null)" == "${CCACHE_ROOT}/nvcc" ]]; then
-    echo "✅ nvcc通过ccache调用" | tee -a "${MAIN_LOG}"
-  else
-    echo "⚠️ nvcc未通过ccache调用: $(which nvcc 2>/dev/null)" | tee -a "${MAIN_LOG}"
-  fi
-else
-  echo "⚠️ ccache 未检测到，跳过缓存" | tee -a "${MAIN_LOG}"
-fi
+  log "Enabled ccache"
+}
 
-# 选择编译器
-if [[ "${USE_CLANG}" == "1" ]] && command -v clang-21 &>/dev/null; then
-   export CC=clang-21 CXX=clang++-21
-   echo "✅ 使用 clang-21 编译" | tee -a "${MAIN_LOG}"
-else
-   export CC=gcc CXX=g++
-   echo "✅ 使用 GCC 编译" | tee -a "${MAIN_LOG}"
-fi
+configure_cuda_architectures() {
+  local -a compute_caps=()
+  mapfile -t compute_caps < <(nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits | sort -u)
+  ((${#compute_caps[@]} > 0)) || die "No CUDA GPU compute capability detected"
 
-# 设置并行
-export MAX_JOBS
+  export TORCH_CUDA_ARCH_LIST
+  TORCH_CUDA_ARCH_LIST="$(IFS=';'; printf '%s' "${compute_caps[*]}")"
 
-# 获取 GPU 计算能力
-mapfile -t cc_list < <(
-  nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits | sort -u
-)
-if [[ ${#cc_list[@]} -eq 0 ]]; then
-  die "未检测到 GPU 计算能力，检查 nvidia-smi 与驱动是否正常"
-fi
-export TORCH_CUDA_ARCH_LIST="$(IFS=';'; echo "${cc_list[*]}")"
-echo "✅ TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}" | tee -a "${MAIN_LOG}"
+  local capability
+  NVCC_FLAGS=""
+  for capability in "${compute_caps[@]}"; do
+    NVCC_FLAGS+=" -gencode arch=compute_${capability//./},code=sm_${capability//./}"
+  done
+  export NVCC_FLAGS
+  log "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
+}
 
-# NVCC 编译标志
-NVCC_FLAGS=""
-for cc in "${cc_list[@]}"; do
-    NVCC_FLAGS+=" -gencode arch=compute_${cc//./},code=sm_${cc//./}"
-done
-export NVCC_FLAGS
-echo "✅ NVCC_FLAGS=${NVCC_FLAGS}" | tee -a "${MAIN_LOG}"
-
-# ----------------------------
-# 3. 系统依赖检查
-# ----------------------------
-echo -e "\n=== [ALL] 检查所有系统依赖 ===" | tee -a "${MAIN_LOG}"
-missing_sysdeps=()
-pkg_list=(
-    # 核心构建工具
+check_system_dependencies() {
+  local -a packages=(
     build-essential ninja-build gcc clang-21 ccache cmake git pkg-config
-    # PyTorch 依赖
     cudnn9-cuda-13 cudss nvshmem libnccl-dev libcutensor-dev libcusparselt-dev
     libopenblas-dev liblapack-dev libomp-21-dev intel-mkl-full
     libprotobuf-dev protobuf-compiler zlib1g-dev libssl-dev
-    # TorchVision 依赖
     ffmpeg libjpeg-dev libpng-dev libwebp-dev libavcodec-dev libavformat-dev
     libavutil-dev libswresample-dev libswscale-dev
-    # Torchaudio 依赖
     libsndfile1-dev libsox-dev libsamplerate0-dev
-)
-for pkg in "${pkg_list[@]}"; do
-    if ! dpkg -s "$pkg" &>/dev/null; then
-        missing_sysdeps+=("$pkg")
-    fi
-done
+  )
+  local -a missing=()
+  local package
 
-if [[ ${#missing_sysdeps[@]} -eq 0 ]]; then
-    echo "✅ 所有系统依赖已满足" | tee -a "${MAIN_LOG}"
-else
-    echo "⚠️ 缺少以下依赖包：" | tee -a "${MAIN_LOG}"
-    for pkg in "${missing_sysdeps[@]}"; do
-        echo "   - $pkg" | tee -a "${MAIN_LOG}"
-    done
-fi
-
-# 检查 cuDNN 头文件
-if [[ ! -f /usr/include/cudnn_version.h && ! -f /usr/include/x86_64-linux-gnu/cudnn_version.h ]]; then
-  echo "❌ 错误：未找到 cuDNN 头文件，请 sudo apt-get -y install cudnn9-cuda-13" | tee -a "${MAIN_LOG}" >&2
-  exit 1
-fi
-
-# 可选：清 pip 缓存
-if [[ "${CLEAR_PIP_CACHE}" == "1" ]]; then
-    echo "🔄 正在清除 pip 缓存..." | tee -a "${MAIN_LOG}"
-    $PYTHON -m pip cache purge || true
-fi
-
-# 全局 pip 依赖（减少重复安装）
-if [[ "${INSTALL_GLOBAL_PIP_DEPS}" == "1" ]]; then
-    echo "🔧 安装全局 pip 依赖..." | tee -a "${MAIN_LOG}"
-    $PYTHON -m pip install -U pip setuptools wheel
-    $PYTHON -m pip install pybind11 uv
-fi
-
-# ======================================================================================
-# =                                PyTorch-Triton 构建流程                              =
-# ======================================================================================
-echo -e "\n\n\n=== [1/4] 开始构建 PyTorch-Triton ===" | tee -a "${MAIN_LOG}"
-
-# 检查源码目录
-if [[ ! -d "${TRITON_SOURCE_DIR}" || ! -f "${TRITON_SOURCE_DIR}/setup.py" ]]; then
-  echo "❌ 错误：未找到 Triton 源码目录 '${TRITON_SOURCE_DIR}' 与 setup.py 文件。" | tee -a "${MAIN_LOG}" >&2
-  echo "   请确保本地路径存在：${TRITON_SOURCE_DIR}" >&2
-  exit 1
-fi
-
-# 清理旧构建
-echo -e "\n--- [Triton] 清理旧构建 ---" | tee -a "${MAIN_LOG}"
-cd "${TRITON_SOURCE_DIR}"
-$PYTHON -m pip uninstall -y triton pytorch-triton &>/dev/null || true
-if [[ "${CLEAN_BUILD}" == "1" ]]; then
-  if [[ -d .git ]]; then
-    git clean -ffdx
+  for package in "${packages[@]}"; do
+    dpkg -s "$package" >/dev/null 2>&1 || missing+=("$package")
+  done
+  if ((${#missing[@]})); then
+    log "Missing system packages: ${missing[*]}"
   else
-    rm -rf build/ dist/ ./*.egg-info .eggs/
+    log "All configured system packages are installed"
   fi
-  echo "✅ 清理完成" | tee -a "${MAIN_LOG}"
-else
-  echo "⏭️ 跳过清理 (CLEAN_BUILD=0)" | tee -a "${MAIN_LOG}"
-fi
+}
 
+print_environment() {
+  section "Build environment"
+  "$PYTHON" --version | tee -a "$MAIN_LOG"
+  gcc -dumpfullversion -dumpversion | sed 's/^/GCC: /' | tee -a "$MAIN_LOG"
+  clang-21 --version | head -n1 | sed 's/^/Clang: /' | tee -a "$MAIN_LOG"
+  cmake --version | head -n1 | sed 's/^/CMake: /' | tee -a "$MAIN_LOG"
+  ninja --version | sed 's/^/Ninja: /' | tee -a "$MAIN_LOG"
+  nvcc --version | grep 'release' | sed 's/^/nvcc: /' | tee -a "$MAIN_LOG"
+  nvidia-smi --query-gpu=driver_version,name --format=csv,noheader | sed 's/^/GPU: /' | tee -a "$MAIN_LOG"
+  git --version | tee -a "$MAIN_LOG"
+}
 
-# 修复 MLIR API 兼容性问题 (LLVM 22)
-echo -e "\n--- [Triton] 修复 MLIR API 兼容性 ---" | tee -a "${MAIN_LOG}"
-if command -v sed >/dev/null 2>&1; then
-  sed -i 's/loc, 0, builder\.getI64Type()/loc, builder.getI64Type(), 0/g' lib/Dialect/Triton/Transforms/RewriteTensorPointer.cpp
-  sed -i 's/loc, 0, builder\.getI64Type()/loc, builder.getI64Type(), 0/g' lib/Dialect/Triton/Transforms/RewriteTensorDescriptorToPointer.cpp
-  sed -i 's/predOp\.getLoc(), 0, predOp\.getResult()\.getType()/predOp.getLoc(), predOp.getResult().getType(), 0/g' lib/Dialect/TritonGPU/Transforms/Pipeliner/SoftwarePipeliner.cpp
-  sed -i 's/predOp\.getLoc(), 1, predOp\.getResult()\.getType()/predOp.getLoc(), predOp.getResult().getType(), 1/g' lib/Dialect/TritonGPU/Transforms/Pipeliner/SoftwarePipeliner.cpp
+preflight() {
+  [[ -x "$PYTHON" ]] || command -v "$PYTHON" >/dev/null 2>&1 || die "Python is unavailable: $PYTHON"
+  require_cmd git
+  require_cmd cmake
+  require_cmd ninja
+  require_cmd gcc
+  require_cmd nvcc
+  require_cmd nvidia-smi
+  [[ -x "$LLVM_CONFIG_PATH" ]] || die "llvm-config is unavailable: $LLVM_CONFIG_PATH"
+  [[ -f /usr/include/cudnn_version.h || -f /usr/include/x86_64-linux-gnu/cudnn_version.h ]] || die "cuDNN headers are unavailable"
 
-  # 修复 NVVM::ElectSyncOp 构造函数 (需要添加可选的membermask参数)
-  sed -i 's/return rewriter\.create<NVVM::ElectSyncOp>(loc, i1_ty)/return rewriter.create<NVVM::ElectSyncOp>(loc, i1_ty, mlir::Value())/g' third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/Utility.cpp
+  configure_paths
+  print_environment
+  configure_compiler
+  configure_ccache
+  configure_cuda_architectures
+  check_system_dependencies
 
-  # 修复 llvm::Function 类型错误 (还原错误的修改)
-  sed -i 's/void runScalarizePackedFOpsPass(mlir::FunctionOpInterface F)/void runScalarizePackedFOpsPass(llvm::Function &F)/g' third_party/amd/include/TritonAMDGPUToLLVM/Passes.h
-
-  echo "✅ MLIR API 兼容性修复完成" | tee -a "${MAIN_LOG}"
-else
-  echo "⚠️  sed 未找到，跳过 MLIR API 修复" | tee -a "${MAIN_LOG}"
-fi
-
-# 安装依赖 & 编译
-echo -e "\n--- [Triton] 安装 pip 依赖 ---" | tee -a "${MAIN_LOG}"
-if [[ "${INSTALL_GLOBAL_PIP_DEPS}" != "1" ]]; then
-  $PYTHON -m pip install pybind11 uv
-else
-  echo "✅ 已使用全局 pip 依赖" | tee -a "${MAIN_LOG}"
-fi
-
-echo -e "\n--- [Triton] 开始编译 Triton ---" | tee -a "${MAIN_LOG}"
-
-# 设置环境变量
-export TRITON_HOME="${HOME}"
-export TRITON_CACHE_DIR="${TRITON_HOME}/.triton/cache"
-export TRITON_CUPTI_INCLUDE_PATH="${CUDA_HOME}/include"
-export TRITON_CUPTI_LIB_PATH="${CUDA_HOME}/lib64"
-export TRITON_LIBDEVICE_PATH="${CUDA_HOME}/nvvm/libdevice"
-export TRITON_LIBCUDA_PATH="${CUDA_HOME}/lib64"
-export TRITON_PTXAS_PATH="${CUDA_HOME}/bin/ptxas"
-export TRITON_CUOBJDUMP_PATH="${CUDA_HOME}/bin/cuobjdump"
-export TRITON_NVDISASM_PATH="${CUDA_HOME}/bin/nvdisasm"
-export TRITON_F32_DEFAULT="tf32"
-export TRITON_DEFAULT_FP_FUSION=1
-export TRITON_INTERPRET=0
-
-export TRITON_WHEEL_NAME="pytorch-triton"
-export TRITON_WHEEL_VERSION_SUFFIX=".post${BUILD_NUMBER}"
-export MAX_JOBS="${MAX_JOBS}"
-export TRITON_BUILD_WITH_CCACHE=1
-export TRITON_PARALLEL_LINK_JOBS=${MAX_JOBS}
-export TRITON_OFFLINE_BUILD=1
-export TRITON_BUILD_PROTON=0
-export TRITON_BUILD_UT=0
-export LLVM_CONFIG_PATH="/usr/lib/llvm-21/bin/llvm-config"
-export LLVM_SYSPATH="/usr/lib/llvm-21"
-
-# 构建 wheel
-echo "✅ 开始构建 Triton wheel..." | tee -a "${TRITON_BUILD_LOG}"
-run_with_log "${TRITON_BUILD_LOG}" $PYTHON -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir
-run_with_log "${TRITON_BUILD_LOG}" $PYTHON -m pip install dist/*.whl
-
-# 验证
-if [[ "${VERIFY_INSTALL}" == "1" ]]; then
-  echo -e "\n--- [Triton] 验证安装 ---" | tee -a "${MAIN_LOG}"
-  cd ..
-  ${PYTHON} -c "import triton; print('Triton:', triton.__version__); print('✅ Triton 验证通过')" | tee -a "${MAIN_LOG}"
-else
-  cd ..
-  echo "⏭️ 跳过 Triton 验证 (VERIFY_INSTALL=0)" | tee -a "${MAIN_LOG}"
-fi
-
-
-# ======================================================================================
-# =                                  PyTorch 构建流程                                  =
-# ======================================================================================
-echo -e "\n\n\n=== [2/4] 开始构建 PyTorch ===" | tee -a "${MAIN_LOG}"
-
-# 检查源码目录
-if [[ ! -d "${PYTORCH_SOURCE_DIR}" || ! -f "${PYTORCH_SOURCE_DIR}/setup.py" ]]; then
-  echo "❌ 错误：未找到 PyTorch 源码目录 '${PYTORCH_SOURCE_DIR}' 与 setup.py 文件。" | tee -a "${MAIN_LOG}" >&2
-  echo "   请确保本地路径存在：${PYTORCH_SOURCE_DIR}" >&2
-  exit 1
-fi
-
-# 清理旧构建
-echo -e "\n--- [PyTorch] 清理旧构建 ---" | tee -a "${MAIN_LOG}"
-cd "${PYTORCH_SOURCE_DIR}"
-$PYTHON -m pip uninstall -y torch &>/dev/null || true
-if [[ "${CLEAN_BUILD}" == "1" ]]; then
-  if [[ -d .git ]]; then
-    git clean -ffdx
-  else
-    rm -rf build/ dist/ ./*.egg-info .eggs/
+  if [[ "$CLEAR_PIP_CACHE" == "1" ]]; then
+    run_with_log "$MAIN_LOG" "$PYTHON" -m pip cache purge || true
   fi
-  echo "✅ 清理完成" | tee -a "${MAIN_LOG}"
-else
-  echo "⏭️ 跳过清理 (CLEAN_BUILD=0)" | tee -a "${MAIN_LOG}"
-fi
+  if [[ "$INSTALL_BUILD_PYTHON_DEPS" == "1" ]]; then
+    run_with_log "$MAIN_LOG" "$PYTHON" -m pip install -U pip 'setuptools>=75' 'setuptools-scm>=8' wheel pybind11 uv
+  fi
+}
 
+build_triton() {
+  section "[1/5] Triton"
+  require_source Triton "$TRITON_SOURCE_DIR"
+  run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip uninstall -y triton pytorch-triton || true
+  clean_source Triton "$TRITON_SOURCE_DIR"
 
-# --- 使用外部 flash-attention ---
-echo -e "\n--- [PyTorch] 替换为外部 flash-attention ---" | tee -a "${MAIN_LOG}"
-FLASH_ATTENTION_SUBMODULE_PATH="${PYTORCH_SOURCE_DIR}/third_party/flash-attention"
-FLASH_ATTENTION_BACKUP_PATH="${FLASH_ATTENTION_SUBMODULE_PATH}_bak"
-EXTERNAL_FLASH_ATTENTION_DIR="../flash-attention"
+  (
+    cd "$TRITON_SOURCE_DIR"
+    export TRITON_HOME="$HOME"
+    export TRITON_CACHE_DIR="$TRITON_HOME/.triton/cache"
+    export TRITON_CUPTI_INCLUDE_PATH="$CUDA_HOME/include"
+    export TRITON_CUPTI_LIB_PATH="$CUDA_HOME/lib64"
+    export TRITON_LIBDEVICE_PATH="$CUDA_HOME/nvvm/libdevice"
+    export TRITON_LIBCUDA_PATH="$CUDA_HOME/lib64"
+    export TRITON_PTXAS_PATH="$CUDA_HOME/bin/ptxas"
+    export TRITON_CUOBJDUMP_PATH="$CUDA_HOME/bin/cuobjdump"
+    export TRITON_NVDISASM_PATH="$CUDA_HOME/bin/nvdisasm"
+    export TRITON_WHEEL_NAME=pytorch-triton
+    export TRITON_WHEEL_VERSION_SUFFIX=".post${BUILD_NUMBER}"
+    export TRITON_BUILD_WITH_CCACHE=1 TRITON_PARALLEL_LINK_JOBS="$MAX_JOBS"
+    export TRITON_OFFLINE_BUILD=1 TRITON_BUILD_PROTON=0 TRITON_BUILD_UT=0
+    run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir
+  )
+  install_wheels "$TRITON_SOURCE_DIR" Triton
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import triton; print('Triton:', triton.__version__)" | tee -a "$MAIN_LOG"
+}
 
-# 设置退出时恢复的 trap, 无论脚本成功或失败都会执行
-trap 'echo -e "\nℹ️ 正在恢复 PyTorch flash-attention 子模块..."; rm -f "${FLASH_ATTENTION_SUBMODULE_PATH}"; if [ -d "${FLASH_ATTENTION_BACKUP_PATH}" ]; then mv "${FLASH_ATTENTION_BACKUP_PATH}" "${FLASH_ATTENTION_SUBMODULE_PATH}"; fi; echo "✅ 已恢复."' EXIT
+build_pytorch() {
+  section "[2/5] PyTorch"
+  require_source PyTorch "$PYTORCH_SOURCE_DIR"
+  run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip uninstall -y torch || true
+  clean_source PyTorch "$PYTORCH_SOURCE_DIR"
 
-# 备份旧的子模块目录并创建链接
-if [ -d "${FLASH_ATTENTION_SUBMODULE_PATH}" ]; then
-    echo "📦 备份 ${FLASH_ATTENTION_SUBMODULE_PATH}" | tee -a "${MAIN_LOG}"
-    mv "${FLASH_ATTENTION_SUBMODULE_PATH}" "${FLASH_ATTENTION_BACKUP_PATH}"
-fi
-echo "🔗 链接 ${EXTERNAL_FLASH_ATTENTION_DIR} -> ${FLASH_ATTENTION_SUBMODULE_PATH}" | tee -a "${MAIN_LOG}"
-ln -s "${EXTERNAL_FLASH_ATTENTION_DIR}" "${FLASH_ATTENTION_SUBMODULE_PATH}"
+  (
+    cd "$PYTORCH_SOURCE_DIR"
+    [[ -f requirements-build.txt ]] && run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m uv pip install -r requirements-build.txt
+    export PYTORCH_BUILD_VERSION PYTORCH_BUILD_NUMBER="$BUILD_NUMBER"
+    export USE_NATIVE_ARCH=1 USE_CUDA=1 USE_CUDNN=1 USE_NCCL=1 USE_CUSPARSELT=1 USE_CUDSS=1
+    export USE_CUFILE=1 USE_MKLDNN=1 USE_OPENMP=1 USE_FLASH_ATTENTION=1 USE_MEM_EFF_ATTENTION=1
+    export USE_DISTRIBUTED=1 USE_XPU=0 USE_ROCM=0 FORCE_CUDA=1 BUILD_TEST=0
+    export CMAKE_BUILD_TYPE=Release CMAKE_POLICY_VERSION_MINIMUM=3.5
+    run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir
+  )
+  install_wheels "$PYTORCH_SOURCE_DIR" PyTorch
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))" | tee -a "$MAIN_LOG"
+}
 
-# 安装依赖 & 编译
-echo -e "\n--- [PyTorch] 安装 pip 依赖 ---" | tee -a "${MAIN_LOG}"
-if [[ "${INSTALL_GLOBAL_PIP_DEPS}" != "1" ]]; then
-  $PYTHON -m pip install pybind11 uv
-else
-  echo "✅ 已使用全局 pip 依赖" | tee -a "${MAIN_LOG}"
-fi
-$PYTHON -m uv pip install -r requirements-build.txt
+build_flash_attention() {
+  section "[3/5] Flash Attention 4"
+  require_directory "Flash Attention 4" "$FLASH_ATTENTION_CUTE_SOURCE_DIR"
+  local constraints_dir="${ROOT_DIR}/.build/constraints"
+  local constraints_file="${constraints_dir}/local-torch.txt"
+  local torch_version
 
-echo -e "\n--- [PyTorch] 开始编译 PyTorch ---" | tee -a "${MAIN_LOG}"
-export PYTORCH_BUILD_VERSION=2.9.0
-export PYTORCH_BUILD_NUMBER="${BUILD_NUMBER}"
-export USE_NATIVE_ARCH=1 USE_CUDA=1 USE_CUDNN=1 USE_NCCL=1 USE_CUSPARSELT=1 USE_CUDSS=1
-export USE_CUFILE=1 USE_MKLDNN=1 USE_OPENMP=1 USE_FLASH_ATTENTION=1 USE_MEM_EFF_ATTENTION=1
-export USE_DISTRIBUTED=1 USE_XPU=0 USE_ROCM=0 FORCE_CUDA=1 BUILD_TEST=0
-export CMAKE_BUILD_TYPE=Release CMAKE_POLICY_VERSION_MINIMUM=3.5
+  torch_version="$("$PYTHON" -c 'import torch; print(torch.__version__)')"
+  mkdir -p "$FLASH_ATTENTION_WHEEL_DIR" "$constraints_dir"
+  printf 'torch==%s\n' "$torch_version" >"$constraints_file"
 
-run_with_log "${PYTORCH_BUILD_LOG}" $PYTHON -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir
-run_with_log "${PYTORCH_BUILD_LOG}" $PYTHON -m pip install dist/*.whl
-echo "✅ PyTorch 编译完成" | tee -a "${MAIN_LOG}"
+  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip uninstall -y flash-attn flash-attn-4 || true
+  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip install -U \
+    --constraint "$constraints_file" \
+    'nvidia-cutlass-dsl[cu13]==4.6.0.dev0' einops typing_extensions \
+    'apache-tvm-ffi>=0.1.12,<0.2' torch-c-dlpack-ext 'quack-kernels>=0.5.3'
+  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip wheel \
+    "$FLASH_ATTENTION_CUTE_SOURCE_DIR" --wheel-dir "$FLASH_ATTENTION_WHEEL_DIR" \
+    --no-build-isolation --no-deps
 
-# 验证
-if [[ "${VERIFY_INSTALL}" == "1" ]]; then
-  echo -e "\n--- [PyTorch] 验证安装 ---" | tee -a "${MAIN_LOG}"
-  cd ..
-  ${PYTHON} -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); assert torch.cuda.is_available(), 'CUDA not enabled'; print('Device :', torch.cuda.get_device_name(0));" | tee -a "${MAIN_LOG}"
-  echo "✅ PyTorch 验证通过" | tee -a "${MAIN_LOG}"
-else
-  cd ..
-  echo "⏭️ 跳过 PyTorch 验证 (VERIFY_INSTALL=0)" | tee -a "${MAIN_LOG}"
-fi
+  local -a wheels=("$FLASH_ATTENTION_WHEEL_DIR"/*.whl)
+  compgen -G "$FLASH_ATTENTION_WHEEL_DIR/*.whl" >/dev/null || die "[Flash Attention 4] no wheel produced in $FLASH_ATTENTION_WHEEL_DIR"
+  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip install --no-deps "${wheels[@]}"
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "from flash_attn.cute import flash_attn_func; print('Flash Attention 4 import verified:', flash_attn_func)" | tee -a "$MAIN_LOG"
+}
 
+build_vision() {
+  section "[4/5] Torchvision"
+  require_source Torchvision "$VISION_SOURCE_DIR"
+  run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip uninstall -y torchvision || true
+  clean_source Torchvision "$VISION_SOURCE_DIR"
 
-# ======================================================================================
-# =                                TorchVision 构建流程                                =
-# ======================================================================================
-echo -e "\n\n\n=== [3/4] 开始构建 TorchVision ===" | tee -a "${MAIN_LOG}"
+  (
+    cd "$VISION_SOURCE_DIR"
+    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip install 'pillow>=10.3.0' 'gdown>=4.7.3' scipy
+    [[ -f requirements.txt ]] && run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m uv pip install -r requirements.txt
+    export BUILD_VERSION="${VISION_BUILD_VERSION}.post${BUILD_NUMBER}"
+    export USE_NATIVE_ARCH=1 USE_CUDA=1 USE_CUDNN=1 USE_XPU=0 USE_ROCM=0
+    export USE_GPU_VIDEO_DECODER=1 USE_CPU_VIDEO_DECODER=1
+    export TORCHVISION_USE_PNG=1 TORCHVISION_USE_JPEG=1 TORCHVISION_USE_WEBP=1 TORCHVISION_USE_NVJPEG=1
+    export FORCE_CUDA=1 BUILD_TEST=0 CMAKE_BUILD_TYPE=Release CMAKE_POLICY_VERSION_MINIMUM=3.5
+    export TORCHVISION_INCLUDE="${TORCHVISION_INCLUDE:-${NVCODEC_HOME}/include}"
+    export TORCHVISION_LIBRARY="${TORCHVISION_LIBRARY:-${NVCODEC_HOME}/lib}"
+    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir --no-deps
+  )
+  install_wheels "$VISION_SOURCE_DIR" Torchvision
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchvision; print('Torchvision:', torchvision.__version__); from torchvision.ops import nms" | tee -a "$MAIN_LOG"
+}
 
-if [[ ! -d "${VISION_SOURCE_DIR}" || ! -f "${VISION_SOURCE_DIR}/setup.py" ]]; then
-  echo "❌ 错误：未找到 Torchvision 源码目录 '${VISION_SOURCE_DIR}' 与 setup.py 文件。" | tee -a "${MAIN_LOG}" >&2
-  echo "   请确保本地路径存在：${VISION_SOURCE_DIR}" >&2
-  exit 1
-fi
+build_audio() {
+  section "[5/5] Torchaudio"
+  require_source Torchaudio "$AUDIO_SOURCE_DIR"
+  run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip uninstall -y torchaudio || true
+  clean_source Torchaudio "$AUDIO_SOURCE_DIR"
 
-# 清理
-echo -e "\n--- [TorchVision] 清理旧构建 ---" | tee -a "${MAIN_LOG}"
-$PYTHON -m pip uninstall -y torchvision &>/dev/null || true
-cd "${VISION_SOURCE_DIR}"
-if [[ "${CLEAN_BUILD}" == "1" ]]; then
-  if [[ -d .git ]]; then git clean -ffdx; else rm -rf build/ dist/ ./*.egg-info .eggs/; fi
-  echo "✅ 清理完成" | tee -a "${MAIN_LOG}"
-else
-  echo "⏭️ 跳过清理 (CLEAN_BUILD=0)" | tee -a "${MAIN_LOG}"
-fi
+  (
+    cd "$AUDIO_SOURCE_DIR"
+    [[ -f requirements.txt ]] && run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m uv pip install -r requirements.txt
+    export BUILD_VERSION="${AUDIO_BUILD_VERSION}.post${BUILD_NUMBER}"
+    export USE_CUDA=1 FORCE_CUDA=1 BUILD_TEST=0 CMAKE_BUILD_TYPE=Release
+    run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir --no-deps
+  )
+  install_wheels "$AUDIO_SOURCE_DIR" Torchaudio
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchaudio; print('Torchaudio:', torchaudio.__version__); print(torchaudio.list_audio_backends())" | tee -a "$MAIN_LOG"
+}
 
+verify_all() {
+  [[ "$VERIFY_INSTALL" == "1" ]] || return
+  section "Final verification"
+  "$PYTHON" - <<'PY'
+import sys
+import torch
+import torchaudio
+import torchvision
+import triton
+from flash_attn.cute import flash_attn_func
 
-# 依赖 & 编译
-echo -e "\n--- [TorchVision] 安装 pip 依赖 ---" | tee -a "${MAIN_LOG}"
-$PYTHON -m pip install pillow>=10.3.0 gdown>=4.7.3 scipy
-[[ -f requirements.txt ]] && $PYTHON -m uv pip install -r requirements.txt
+print("Python:", sys.version)
+print("Triton:", triton.__version__)
+print("PyTorch:", torch.__version__, "CUDA:", torch.version.cuda)
+print("Torchvision:", torchvision.__version__)
+print("Torchaudio:", torchaudio.__version__)
+assert torch.cuda.is_available(), "CUDA not enabled"
+assert torch._C._has_cudnn, "cuDNN extension not compiled"
+assert torchvision._HAS_OPS, "Torchvision extension not compiled"
+x = torch.randn(10, 10, device="cuda")
+print("CUDA matrix multiplication norm:", (x @ x).norm().item())
+q = torch.randn(1, 128, 8, 64, device="cuda", dtype=torch.float16)
+print("Flash Attention 4 output shape:", tuple(flash_attn_func(q, q, q, causal=True).shape))
+print("All components verified successfully")
+PY
+}
 
-echo -e "\n--- [TorchVision] 开始编译 TorchVision ---" | tee -a "${MAIN_LOG}"
-export BUILD_VERSION="0.24.0.post${BUILD_NUMBER}"
-export USE_NATIVE_ARCH=1 USE_CUDA=1 USE_CUDNN=1 USE_XPU=0 USE_ROCM=0
-export USE_GPU_VIDEO_DECODER=1 USE_CPU_VIDEO_DECODER=1
-export TORCHVISION_USE_PNG=1 TORCHVISION_USE_JPEG=1 TORCHVISION_USE_WEBP=1 TORCHVISION_USE_NVJPEG=1
-export FORCE_CUDA=1 BUILD_TEST=0 CMAKE_BUILD_TYPE=Release CMAKE_POLICY_VERSION_MINIMUM=3.5
-export TORCHVISION_INCLUDE="${TORCHVISION_INCLUDE:-${NVCODEC_HOME}/include}"
-export TORCHVISION_LIBRARY="${TORCHVISION_LIBRARY:-${WSL_HOME}/lib}"
+main() {
+  require_configuration
+  preflight
+  build_triton
+  build_pytorch
+  build_flash_attention
+  build_vision
+  build_audio
+  verify_all
+  section "Build complete"
+  log "Main log: $MAIN_LOG"
+  log "Triton log: $TRITON_BUILD_LOG"
+  log "PyTorch log: $PYTORCH_BUILD_LOG"
+  log "Flash Attention log: $FLASH_ATTENTION_BUILD_LOG"
+  log "Torchvision log: $VISION_BUILD_LOG"
+  log "Torchaudio log: $AUDIO_BUILD_LOG"
+}
 
-run_with_log "${VISION_BUILD_LOG}" $PYTHON -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir --no-deps
-run_with_log "${VISION_BUILD_LOG}" $PYTHON -m pip install dist/*.whl
-echo "✅ TorchVision 编译完成" | tee -a "${MAIN_LOG}"
-
-# 验证
-if [[ "${VERIFY_INSTALL}" == "1" ]]; then
-  echo -e "\n--- [TorchVision] 验证安装 ---" | tee -a "${MAIN_LOG}"
-  cd ..
-  ${PYTHON} -c "import torchvision; print('Torchvision:', torchvision.__version__); from torchvision.ops import nms" | tee -a "${MAIN_LOG}"
-  echo "✅ TorchVision 验证通过" | tee -a "${MAIN_LOG}"
-else
-  cd ..
-  echo "⏭️ 跳过 TorchVision 验证 (VERIFY_INSTALL=0)" | tee -a "${MAIN_LOG}"
-fi
-
-
-# ======================================================================================
-# =                                Torchaudio 构建流程                                 =
-# ======================================================================================
-echo -e "\n\n\n=== [4/4] 开始构建 Torchaudio ===" | tee -a "${MAIN_LOG}"
-
-if [[ ! -d "${AUDIO_SOURCE_DIR}" || ! -f "${AUDIO_SOURCE_DIR}/setup.py" ]]; then
-  echo "❌ 错误：未找到 Torchaudio 源码目录 '${AUDIO_SOURCE_DIR}' 与 setup.py 文件。" | tee -a "${MAIN_LOG}" >&2
-  echo "   请确保本地路径存在：${AUDIO_SOURCE_DIR}" >&2
-  exit 1
-fi
-
-# 清理
-echo -e "\n--- [Torchaudio] 清理旧构建 ---" | tee -a "${MAIN_LOG}"
-cd "${AUDIO_SOURCE_DIR}"
-$PYTHON -m pip uninstall -y torchaudio &>/dev/null || true
-if [[ "${CLEAN_BUILD}" == "1" ]]; then
-  if [[ -d .git ]]; then git clean -ffdx; else rm -rf build/ dist/ ./*.egg-info .eggs/ src/torchaudio.egg-info; fi
-  echo "✅ 清理完成" | tee -a "${MAIN_LOG}"
-else
-  echo "⏭️ 跳过清理 (CLEAN_BUILD=0)" | tee -a "${MAIN_LOG}"
-fi
-
-
-# 依赖 & 编译
-echo -e "\n--- [Torchaudio] 安装 pip 依赖 ---" | tee -a "${MAIN_LOG}"
-[[ -f requirements.txt ]] && $PYTHON -m uv pip install -r requirements.txt
-
-
-echo -e "\n--- [Torchaudio] 开始编译 Torchaudio ---" | tee -a "${MAIN_LOG}"
-export BUILD_VERSION="2.8.0.post${BUILD_NUMBER}"
-export USE_CUDA=1 FORCE_CUDA=1 BUILD_TEST=0 CMAKE_BUILD_TYPE=Release
-
-run_with_log "${AUDIO_BUILD_LOG}" $PYTHON -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir --no-deps
-run_with_log "${AUDIO_BUILD_LOG}" $PYTHON -m pip install dist/*.whl
-echo "✅ Torchaudio 编译完成" | tee -a "${MAIN_LOG}"
-
-# 验证
-if [[ "${VERIFY_INSTALL}" == "1" ]]; then
-  echo -e "\n--- [Torchaudio] 验证安装 ---" | tee -a "${MAIN_LOG}"
-  cd ..
-  ${PYTHON} -c "import torchaudio; print('Torchaudio:', torchaudio.__version__); print('Torchaudio backends:', torchaudio.list_audio_backends())" | tee -a "${MAIN_LOG}"
-  echo "✅ Torchaudio 验证通过" | tee -a "${MAIN_LOG}"
-else
-  cd ..
-  echo "⏭️ 跳过 Torchaudio 验证 (VERIFY_INSTALL=0)" | tee -a "${MAIN_LOG}"
-fi
-
-
-# ----------------------------
-# 6. 最终验证
-# ----------------------------
-if [[ "${VERIFY_INSTALL}" == "1" ]]; then
-  echo -e "\n\n\n=== [ALL] 最终整体验证 ===" | tee -a "${MAIN_LOG}"
-  ${PYTHON} - <<EOF
-import torch, torchvision, torchaudio, triton, sys
-print('--- Final Verification ---')
-print('Python:', sys.version)
-print('Triton:', triton.__version__)
-print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda)
-print('Torchvision:', torchvision.__version__)
-print('Torchaudio:', torchaudio.__version__)
-assert torch.cuda.is_available(), 'CUDA not enabled'
-print('Device :', torch.cuda.get_device_name(0))
-x = torch.randn(10,10, device='cuda')
-print('CUDA matrix multiplication norm:', (x @ x).norm().item())
-assert torch._C._has_cudnn, 'CUDNN extension not compiled'
-assert torchvision._HAS_OPS, 'Torchvision CUDA extension not compiled'
-print('Torchaudio backends:', torchaudio.list_audio_backends())
-assert hasattr(torchaudio, 'sox_effects'), 'sox_effects not available'
-print('✅✅✅ All components verified successfully! ✅✅✅')
-EOF
-else
-  echo -e "\n\n⏭️ 跳过最终验证 (VERIFY_INSTALL=0)" | tee -a "${MAIN_LOG}"
-fi
-
-echo -e "\n\n主日志文件：${MAIN_LOG}" | tee -a "${MAIN_LOG}"
-echo "Triton 日志: ${TRITON_BUILD_LOG}" | tee -a "${MAIN_LOG}"
-echo "PyTorch 日志: ${PYTORCH_BUILD_LOG}" | tee -a "${MAIN_LOG}"
-echo "TorchVision 日志: ${VISION_BUILD_LOG}" | tee -a "${MAIN_LOG}"
-echo "Torchaudio 日志: ${AUDIO_BUILD_LOG}" | tee -a "${MAIN_LOG}"
+main "$@"

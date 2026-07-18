@@ -1,2 +1,8 @@
 # Output from the local all-torch build helper.
 *_build.log
+
+# Local build configuration; it may contain machine-specific paths or credentials.
+.env
+
+# Local wheel and build outputs.
+.build/

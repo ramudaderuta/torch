@@ -1,10 +1,17 @@
 {
+  ".gitignore": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/how-to/build-and-validation.md"
+    ],
+    "symbols": {}
+  },
   ".gitmodules": {
     "anchors": [],
     "definition_pages": [],
     "pages": [
       ".codex/wiki/concepts/project-overview.md",
-      ".codex/wiki/how-to/build-and-validation.md",
       ".codex/wiki/how-to/upstream-update.md"
     ],
     "symbols": {}
@@ -31,6 +38,14 @@
     "definition_pages": [],
     "pages": [
       ".codex/wiki/concepts/project-overview.md"
+    ],
+    "symbols": {}
+  },
+  "flash-attention/flash_attn/cute/pyproject.toml": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/how-to/build-and-validation.md"
     ],
     "symbols": {}
   },
