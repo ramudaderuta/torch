@@ -4,5 +4,9 @@
 # Local build configuration; it may contain machine-specific paths or credentials.
 .env
 
+# Project-local build interpreter and retained wheel artifacts.
+.venv/
+dist/
+
 # Local wheel and build outputs.
 .build/

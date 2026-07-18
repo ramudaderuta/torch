@@ -48,6 +48,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+[[ "$DEPTH" =~ ^[1-9][0-9]*$ ]] || die "DEPTH must be a positive integer: $DEPTH"
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "JOBS must be a positive integer: $JOBS"
+
 update_repo() {
   local repo_path="$1"
   local repo_label="$2"
@@ -88,14 +91,10 @@ update_repo() {
   fi
   git fetch --depth "$DEPTH" "$REMOTE" "$branch"
   if ! git merge --ff-only "$REMOTE/$branch"; then
-    if ! git merge-base "$REMOTE/$branch" HEAD >/dev/null 2>&1; then
-      echo "WARN: unrelated histories, reset to $REMOTE/$branch"
-      git reset --hard "$REMOTE/$branch"
-    else
-      echo "ERROR: merge failed (not unrelated histories)."
-      popd >/dev/null
-      return 1
-    fi
+    echo "ERROR: cannot fast-forward to $REMOTE/$branch; local history is divergent or unrelated."
+    echo "       No reset was performed. Inspect and reconcile the histories explicitly."
+    popd >/dev/null
+    return 1
   fi
 
   if [[ -f .gitmodules ]]; then

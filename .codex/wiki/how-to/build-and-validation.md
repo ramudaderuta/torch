@@ -20,10 +20,14 @@ updated: 2026-07-18T15:14:01Z
 
 # Source Build and Validation
 
-`build.sh` is the canonical entry point for the local CUDA source build. It builds Triton, PyTorch, Flash Attention 4, Torchvision, and Torchaudio in that order. `.env` is required and is the sole source for mutable configuration: source paths, versions, compiler and cleanup switches, CUDA/LLVM paths, and wheel-output locations. The script validates every required setting before it performs preflight checks or modifies build outputs.
+`build.sh` is the canonical entry point for the local CUDA source build. It builds Triton, PyTorch, Flash Attention 4, Torchvision, and Torchaudio in that order. `.env` is required and is the sole source for mutable configuration: source paths, versions, compiler and cleanup switches, CUDA/LLVM paths, the project venv, dependency-lock path, and wheel-output location. The script creates or validates the ignored root `.venv` before it modifies package state; it rejects a non-venv interpreter.
+
+Final wheels are retained in the ignored root `dist/` directory. The script installs a just-built wheel only into `.venv` where a later component needs it; it does not install artifacts into a system or user Python environment. Install selected files from `dist/` explicitly into the consumer environment after a successful build.
+
+`requirements/build.in` and its generated hash-locked `requirements/build.lock` pin the PyTorch build-tool closure. The local PyTorch and FA4 runtime closure cannot be resolved correctly from PyPI before the local Torch wheel exists, so the build records its post-build environment and wheel metadata as provenance instead of substituting an incompatible public Torch wheel.
 
 PyTorch builds its own pinned `pytorch/third_party/flash-attention` tree as the in-tree SDPA implementation. The script does not replace that source tree with an installed package or an external checkout.
 
-Flash Attention 4 is built independently from `flash-attention/flash_attn/cute` into an ignored `.build/wheels/flash-attn-4` directory. Its dependency installation constrains `torch` to the version installed by the preceding local PyTorch step, and the generated wheel is installed with `--no-deps`; this prevents pip from replacing the local PyTorch package. The FA4 wheel provides direct and Inductor-oriented functionality on SM120, but it is not activated as PyTorch's standard SDPA backend.
+Flash Attention 4 is built independently from `flash-attention/flash_attn/cute` into root `dist/`. Its dependency installation constrains `torch` to the version installed by the preceding local PyTorch step, and the generated wheel is installed with `--no-deps`; this prevents pip from replacing the local PyTorch package. The FA4 wheel provides direct and Inductor-oriented functionality on SM120, but it is not activated as PyTorch's standard SDPA backend.
 
 Before a full build, run `bash -n build.sh` and confirm `.env` has the intended local values. A full build validates imports and runs a CUDA FA4 forward call during final verification.

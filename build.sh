@@ -2,7 +2,7 @@
 # Build local PyTorch, Triton, Flash Attention 4, Torchvision, and Torchaudio sources for CUDA.
 set -euo pipefail
 
-ROOT_DIR="$(pwd)"
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # Optional local configuration. Keep this trusted shell-compatible KEY=VALUE file local.
 : "${ENV_FILE:=${ROOT_DIR}/.env}"
@@ -26,6 +26,21 @@ for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATT
   : >"$log_file"
 done
 
+CURRENT_STAGE="initialization"
+
+on_error() {
+  local exit_code="$1"
+  local line_number="$2"
+  local command="$3"
+  trap - ERR
+  printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" | tee -a "$MAIN_LOG" >&2
+  printf 'Logs: main=%s triton=%s pytorch=%s flash-attention=%s vision=%s audio=%s\n' \
+    "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
+  exit "$exit_code"
+}
+
+trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
 die() {
   printf 'ERROR: %s\n' "$*" | tee -a "$MAIN_LOG" >&2
   exit 1
@@ -34,10 +49,10 @@ die() {
 require_configuration() {
   local variable
   local -a required_variables=(
-    BUILD_NUMBER PYTHON MAX_JOBS USE_CLANG CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
+    BUILD_NUMBER VENV_DIR PYTHON PYTHON_VERSION BUILD_CONSTRAINTS_FILE DIST_DIR MAX_JOBS USE_CLANG CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
     INSTALL_BUILD_PYTHON_DEPS PYTORCH_SOURCE_DIR VISION_SOURCE_DIR AUDIO_SOURCE_DIR
     TRITON_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
-    FLASH_ATTENTION_WHEEL_DIR CUDA_HOME MAGMA_ROOT OPENMPI_ROOT NVCODEC_HOME
+    CUDA_HOME MAGMA_ROOT OPENMPI_ROOT NVCODEC_HOME
     LLVM_CONFIG_PATH LLVM_SYSPATH PYTORCH_BUILD_VERSION VISION_BUILD_VERSION
     AUDIO_BUILD_VERSION
   )
@@ -52,6 +67,7 @@ log() {
 }
 
 section() {
+  CURRENT_STAGE="$*"
   log ""
   log "=== $* ==="
 }
@@ -95,14 +111,53 @@ clean_source() {
   fi
 }
 
-install_wheels() {
-  local source_dir="$1"
-  local package_name="$2"
-  shift 2
-  local -a wheels=("$source_dir"/dist/*.whl)
+prepare_wheel_dir() {
+  local component="$1"
+  local wheel_dir="${ROOT_DIR}/.build/wheels/${component}"
 
-  compgen -G "$source_dir/dist/*.whl" >/dev/null || die "[$package_name] no wheel produced in $source_dir/dist"
-  run_with_log "$MAIN_LOG" "$PYTHON" -m pip install "$@" "${wheels[@]}"
+  rm -rf -- "$wheel_dir"
+  mkdir -p "$wheel_dir"
+  printf '%s\n' "$wheel_dir"
+}
+
+stage_and_install_wheel() {
+  local package_name="$1"
+  local wheel_dir="$2"
+  local wheel_pattern="$3"
+  local -a wheels=("$wheel_dir"/$wheel_pattern)
+
+  compgen -G "$wheel_dir/$wheel_pattern" >/dev/null || die "[$package_name] no wheel produced in $wheel_dir"
+  ((${#wheels[@]} == 1)) || die "[$package_name] ambiguous wheel selection in $wheel_dir: $wheel_pattern"
+  cp -f -- "${wheels[0]}" "$DIST_DIR/"
+  run_with_log "$MAIN_LOG" "$PYTHON" -m pip install --no-deps "${wheels[0]}"
+}
+
+ensure_project_venv() {
+  if [[ ! -x "$PYTHON" ]]; then
+    [[ ! -e "$VENV_DIR" ]] || die "Project venv is incomplete: $VENV_DIR"
+    require_cmd uv
+    uv venv --python "$PYTHON_VERSION" "$VENV_DIR" | tee -a "$MAIN_LOG"
+  fi
+
+  "$PYTHON" - <<'PY' || die "Configured Python is not an isolated virtual environment: $PYTHON"
+import sys
+raise SystemExit(sys.prefix == sys.base_prefix)
+PY
+}
+
+validate_versions() {
+  [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || die "BUILD_NUMBER must be a non-negative integer"
+  "$PYTHON" - <<'PY' || die "Configured wheel version is not PEP 440 compatible"
+import os
+from packaging.version import Version
+Version(f"{os.environ['VISION_BUILD_VERSION']}.post{os.environ['BUILD_NUMBER']}")
+Version(f"{os.environ['AUDIO_BUILD_VERSION']}.post{os.environ['BUILD_NUMBER']}")
+PY
+}
+
+write_provenance() {
+  "$PYTHON" -m pip freeze >"${ROOT_DIR}/.build/manifests/pip-freeze.txt"
+  git submodule status --recursive >"${ROOT_DIR}/.build/manifests/submodules.txt"
 }
 
 configure_paths() {
@@ -189,7 +244,10 @@ print_environment() {
 }
 
 preflight() {
-  [[ -x "$PYTHON" ]] || command -v "$PYTHON" >/dev/null 2>&1 || die "Python is unavailable: $PYTHON"
+  require_cmd uv
+  ensure_project_venv
+  [[ -f "$BUILD_CONSTRAINTS_FILE" ]] || die "Build constraints are unavailable: $BUILD_CONSTRAINTS_FILE"
+  mkdir -p "$DIST_DIR" "${ROOT_DIR}/.build/manifests"
   require_cmd git
   require_cmd cmake
   require_cmd ninja
@@ -210,13 +268,17 @@ preflight() {
     run_with_log "$MAIN_LOG" "$PYTHON" -m pip cache purge || true
   fi
   if [[ "$INSTALL_BUILD_PYTHON_DEPS" == "1" ]]; then
-    run_with_log "$MAIN_LOG" "$PYTHON" -m pip install -U pip 'setuptools>=75' 'setuptools-scm>=8' wheel pybind11 uv
+    run_with_log "$MAIN_LOG" uv pip install --python "$PYTHON" --require-hashes -r "$BUILD_CONSTRAINTS_FILE"
   fi
+  "$PYTHON" -m pip --version >/dev/null || die "pip is unavailable in project venv: $PYTHON"
+  validate_versions
 }
 
 build_triton() {
   section "[1/5] Triton"
   require_source Triton "$TRITON_SOURCE_DIR"
+  local wheel_dir
+  wheel_dir="$(prepare_wheel_dir triton)"
   run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip uninstall -y triton pytorch-triton || true
   clean_source Triton "$TRITON_SOURCE_DIR"
 
@@ -235,68 +297,72 @@ build_triton() {
     export TRITON_WHEEL_VERSION_SUFFIX=".post${BUILD_NUMBER}"
     export TRITON_BUILD_WITH_CCACHE=1 TRITON_PARALLEL_LINK_JOBS="$MAX_JOBS"
     export TRITON_OFFLINE_BUILD=1 TRITON_BUILD_PROTON=0 TRITON_BUILD_UT=0
-    run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir
+    run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
-  install_wheels "$TRITON_SOURCE_DIR" Triton
+  stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl'
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import triton; print('Triton:', triton.__version__)" | tee -a "$MAIN_LOG"
 }
 
 build_pytorch() {
   section "[2/5] PyTorch"
   require_source PyTorch "$PYTORCH_SOURCE_DIR"
+  local wheel_dir
+  wheel_dir="$(prepare_wheel_dir pytorch)"
   run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip uninstall -y torch || true
   clean_source PyTorch "$PYTORCH_SOURCE_DIR"
 
   (
     cd "$PYTORCH_SOURCE_DIR"
-    [[ -f requirements-build.txt ]] && run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m uv pip install -r requirements-build.txt
+    [[ -f requirements-build.txt ]] && run_with_log "$PYTORCH_BUILD_LOG" uv pip install --python "$PYTHON" --require-hashes -r "$BUILD_CONSTRAINTS_FILE"
     export PYTORCH_BUILD_VERSION PYTORCH_BUILD_NUMBER="$BUILD_NUMBER"
     export USE_NATIVE_ARCH=1 USE_CUDA=1 USE_CUDNN=1 USE_NCCL=1 USE_CUSPARSELT=1 USE_CUDSS=1
     export USE_CUFILE=1 USE_MKLDNN=1 USE_OPENMP=1 USE_FLASH_ATTENTION=1 USE_MEM_EFF_ATTENTION=1
     export USE_DISTRIBUTED=1 USE_XPU=0 USE_ROCM=0 FORCE_CUDA=1 BUILD_TEST=0
     export CMAKE_BUILD_TYPE=Release CMAKE_POLICY_VERSION_MINIMUM=3.5
-    run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir
+    run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
-  install_wheels "$PYTORCH_SOURCE_DIR" PyTorch
+  stage_and_install_wheel PyTorch "$wheel_dir" 'torch-*.whl'
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))" | tee -a "$MAIN_LOG"
 }
 
 build_flash_attention() {
   section "[3/5] Flash Attention 4"
   require_directory "Flash Attention 4" "$FLASH_ATTENTION_CUTE_SOURCE_DIR"
+  local wheel_dir
   local constraints_dir="${ROOT_DIR}/.build/constraints"
   local constraints_file="${constraints_dir}/local-torch.txt"
   local torch_version
 
   torch_version="$("$PYTHON" -c 'import torch; print(torch.__version__)')"
-  mkdir -p "$FLASH_ATTENTION_WHEEL_DIR" "$constraints_dir"
+  wheel_dir="$(prepare_wheel_dir flash-attention-4)"
+  mkdir -p "$constraints_dir"
   printf 'torch==%s\n' "$torch_version" >"$constraints_file"
 
   run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip uninstall -y flash-attn flash-attn-4 || true
-  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip install -U \
+  run_with_log "$FLASH_ATTENTION_BUILD_LOG" uv pip install --python "$PYTHON" \
     --constraint "$constraints_file" \
     'nvidia-cutlass-dsl[cu13]==4.6.0.dev0' einops typing_extensions \
     'apache-tvm-ffi>=0.1.12,<0.2' torch-c-dlpack-ext 'quack-kernels>=0.5.3'
   run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip wheel \
-    "$FLASH_ATTENTION_CUTE_SOURCE_DIR" --wheel-dir "$FLASH_ATTENTION_WHEEL_DIR" \
+    "$FLASH_ATTENTION_CUTE_SOURCE_DIR" --wheel-dir "$wheel_dir" \
     --no-build-isolation --no-deps
 
-  local -a wheels=("$FLASH_ATTENTION_WHEEL_DIR"/*.whl)
-  compgen -G "$FLASH_ATTENTION_WHEEL_DIR/*.whl" >/dev/null || die "[Flash Attention 4] no wheel produced in $FLASH_ATTENTION_WHEEL_DIR"
-  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip install --no-deps "${wheels[@]}"
+  stage_and_install_wheel "Flash Attention 4" "$wheel_dir" 'flash_attn_4*.whl'
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "from flash_attn.cute import flash_attn_func; print('Flash Attention 4 import verified:', flash_attn_func)" | tee -a "$MAIN_LOG"
 }
 
 build_vision() {
   section "[4/5] Torchvision"
   require_source Torchvision "$VISION_SOURCE_DIR"
+  local wheel_dir
+  wheel_dir="$(prepare_wheel_dir vision)"
   run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip uninstall -y torchvision || true
   clean_source Torchvision "$VISION_SOURCE_DIR"
 
   (
     cd "$VISION_SOURCE_DIR"
     run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip install 'pillow>=10.3.0' 'gdown>=4.7.3' scipy
-    [[ -f requirements.txt ]] && run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m uv pip install -r requirements.txt
+    [[ -f requirements.txt ]] && run_with_log "$VISION_BUILD_LOG" uv pip install --python "$PYTHON" -r requirements.txt
     export BUILD_VERSION="${VISION_BUILD_VERSION}.post${BUILD_NUMBER}"
     export USE_NATIVE_ARCH=1 USE_CUDA=1 USE_CUDNN=1 USE_XPU=0 USE_ROCM=0
     export USE_GPU_VIDEO_DECODER=1 USE_CPU_VIDEO_DECODER=1
@@ -304,27 +370,29 @@ build_vision() {
     export FORCE_CUDA=1 BUILD_TEST=0 CMAKE_BUILD_TYPE=Release CMAKE_POLICY_VERSION_MINIMUM=3.5
     export TORCHVISION_INCLUDE="${TORCHVISION_INCLUDE:-${NVCODEC_HOME}/include}"
     export TORCHVISION_LIBRARY="${TORCHVISION_LIBRARY:-${NVCODEC_HOME}/lib}"
-    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir --no-deps
+    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
-  install_wheels "$VISION_SOURCE_DIR" Torchvision
+  stage_and_install_wheel Torchvision "$wheel_dir" 'torchvision-*.whl'
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchvision; print('Torchvision:', torchvision.__version__); from torchvision.ops import nms" | tee -a "$MAIN_LOG"
 }
 
 build_audio() {
   section "[5/5] Torchaudio"
   require_source Torchaudio "$AUDIO_SOURCE_DIR"
+  local wheel_dir
+  wheel_dir="$(prepare_wheel_dir audio)"
   run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip uninstall -y torchaudio || true
   clean_source Torchaudio "$AUDIO_SOURCE_DIR"
 
   (
     cd "$AUDIO_SOURCE_DIR"
-    [[ -f requirements.txt ]] && run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m uv pip install -r requirements.txt
+    [[ -f requirements.txt ]] && run_with_log "$AUDIO_BUILD_LOG" uv pip install --python "$PYTHON" -r requirements.txt
     export BUILD_VERSION="${AUDIO_BUILD_VERSION}.post${BUILD_NUMBER}"
     export USE_CUDA=1 FORCE_CUDA=1 BUILD_TEST=0 CMAKE_BUILD_TYPE=Release
-    run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir dist/ --no-build-isolation --no-cache-dir --no-deps
+    run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
-  install_wheels "$AUDIO_SOURCE_DIR" Torchaudio
-  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchaudio; print('Torchaudio:', torchaudio.__version__); print(torchaudio.list_audio_backends())" | tee -a "$MAIN_LOG"
+  stage_and_install_wheel Torchaudio "$wheel_dir" 'torchaudio-*.whl'
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchaudio; from torchaudio import _extension; print('Torchaudio:', torchaudio.__version__, 'extension:', _extension._IS_TORCHAUDIO_EXT_AVAILABLE)" | tee -a "$MAIN_LOG"
 }
 
 verify_all() {
@@ -344,10 +412,14 @@ print("PyTorch:", torch.__version__, "CUDA:", torch.version.cuda)
 print("Torchvision:", torchvision.__version__)
 print("Torchaudio:", torchaudio.__version__)
 assert torch.cuda.is_available(), "CUDA not enabled"
-assert torch._C._has_cudnn, "cuDNN extension not compiled"
+assert torch.backends.cudnn.is_available(), "cuDNN extension not compiled"
 assert torchvision._HAS_OPS, "Torchvision extension not compiled"
+capability = ".".join(map(str, torch.cuda.get_device_capability()))
+assert any(capability.replace(".", "") in arch for arch in torch.cuda.get_arch_list()), (capability, torch.cuda.get_arch_list())
 x = torch.randn(10, 10, device="cuda")
 print("CUDA matrix multiplication norm:", (x @ x).norm().item())
+boxes = torch.tensor([[0, 0, 10, 10], [1, 1, 11, 11]], device="cuda", dtype=torch.float32)
+print("Torchvision CUDA NMS:", torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device="cuda"), 0.5).tolist())
 q = torch.randn(1, 128, 8, 64, device="cuda", dtype=torch.float16)
 print("Flash Attention 4 output shape:", tuple(flash_attn_func(q, q, q, causal=True).shape))
 print("All components verified successfully")
@@ -363,6 +435,7 @@ main() {
   build_vision
   build_audio
   verify_all
+  write_provenance
   section "Build complete"
   log "Main log: $MAIN_LOG"
   log "Triton log: $TRITON_BUILD_LOG"

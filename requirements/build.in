@@ -1,0 +1,7 @@
+# PyTorch build prerequisites for the local CUDA source-build venv.
+# Runtime dependencies that require the locally built torch are resolved only
+# after its wheel exists; see build.sh provenance manifests.
+-r ../pytorch/requirements-build.txt
+pybind11
+setuptools-scm>=8
+wheel
