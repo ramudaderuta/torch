@@ -20,6 +20,10 @@ These instructions apply at the repository root. Each Git submodule is a separat
 
 `build.sh` is the canonical build entry point. Read it before changing or invoking it. Verify Python, CUDA, compiler versions, submodule commits, storage, GPU architecture settings, and requested scope. Prefer the smallest validation that proves the change; do not launch a costly full build by default.
 
+- `build.sh` requires the root `.env` as its only mutable configuration source. Keep it local, mode `600`, and untracked; never add machine paths, secrets, or generated values to the script as replacement defaults.
+- Build PyTorch against its pinned `pytorch/third_party/flash-attention` tree. Do not replace it with an external checkout or installed package. Build standalone FA4 from `flash-attention/flash_attn/cute` after PyTorch; generated wheels belong under ignored `.build/` and install with the local torch version constrained.
+- FA4 is a direct/Inductor package on this SM120 host, not PyTorch's standard SDPA backend. Do not co-install standalone FA2 and FA4 because both own the `flash_attn` Python namespace.
+
 ## Updating upstream sources
 
 `update.sh` is the canonical update entry point. Run it only when requested. Preserve local modifications, record old and new submodule commits, inspect the resulting diff, and validate compatibility; a successful fetch is not sufficient evidence.

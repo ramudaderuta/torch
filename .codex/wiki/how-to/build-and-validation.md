@@ -15,10 +15,8 @@ tags:
   - cuda
   - flash-attention
 last_checked: 2026-07-18
-updated: 2026-07-18T15:12:07Z
+updated: 2026-07-18T15:14:01Z
 ---
-
-# Source Build and Validation
 
 # Source Build and Validation
 

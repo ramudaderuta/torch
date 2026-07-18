@@ -3,8 +3,10 @@ title: Project Wiki Index
 type: wiki-index
 status: current
 generated_by: /home/build/.codex/skills/wiki-note/scripts/wiki_note.py
-updated: 2026-07-18T15:12:08Z
+updated: 2026-07-18T15:14:01Z
 ---
+
+
 
 
 
@@ -21,7 +23,7 @@ updated: 2026-07-18T15:12:08Z
 # Project Wiki Index
 
 <!-- BEGIN AUTO -->
-- Last rebuilt: 2026-07-18T15:12:08Z
+- Last rebuilt: 2026-07-18T15:14:01Z
 - Page count: 3
 
 ## By Type
@@ -32,7 +34,7 @@ updated: 2026-07-18T15:12:08Z
 
 ### how-to
 
-- [Source Build and Validation](how-to/build-and-validation.md) | status: current | updated: 2026-07-18T15:12:07Z
+- [Source Build and Validation](how-to/build-and-validation.md) | status: current | updated: 2026-07-18T15:14:01Z
 - [上游同步与子模块更新](how-to/upstream-update.md) | status: current | updated: 2026-07-18T14:08:08Z
 
 ## By Scope
@@ -45,7 +47,7 @@ updated: 2026-07-18T15:12:08Z
 
 ## Recently Updated
 
-- 2026-07-18T15:12:07Z | [Source Build and Validation](how-to/build-and-validation.md)
+- 2026-07-18T15:14:01Z | [Source Build and Validation](how-to/build-and-validation.md)
 - 2026-07-18T14:08:08Z | [项目概览与架构边界](concepts/project-overview.md)
 - 2026-07-18T14:08:08Z | [上游同步与子模块更新](how-to/upstream-update.md)
 
