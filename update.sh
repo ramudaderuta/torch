@@ -2,9 +2,16 @@
 set -euo pipefail
 
 # ===== 可调参数（也可用命令行覆盖）=====
-DEPTH="${DEPTH:-20}"     # 默认浅历史深度（10 可能经常不够，20/50 更稳）
+DEPTH="${DEPTH:-100}"    # 默认浅历史深度（10 可能经常不够，20/50/100 更稳）
 JOBS="${JOBS:-8}"        # submodule 并行更新数量
 REMOTE="${REMOTE:-origin}"
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+command -v git &>/dev/null || die "缺少命令: git"
 
 usage() {
   cat <<EOF
@@ -17,12 +24,14 @@ Env overrides:
 Notes:
   - 会更新当前分支对应的远端分支（REMOTE/<branch>）
   - 工作区有未提交改动会退出
+  - detached HEAD 不支持（请先切回分支）
   - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton（存在则更新，不存在则提示）
 EOF
 }
 
 REPO=""
 EXTRA_REPOS=(
+  "pytorch|https://github.com/pytorch/pytorch"
   "vision|https://github.com/pytorch/vision"
   "audio|https://github.com/pytorch/audio"
   "flash-attention|https://github.com/Dao-AILab/flash-attention.git"
@@ -59,15 +68,35 @@ update_repo() {
   fi
 
   local branch
-  branch="$(git rev-parse --abbrev-ref HEAD)"
+  branch="$(git symbolic-ref --short -q HEAD || true)"
+  if [[ -z "$branch" ]]; then
+    echo "ERROR: $repo_label 处于 detached HEAD，无法更新远端分支。"
+    echo "       Repo: $(git rev-parse --show-toplevel)"
+    popd >/dev/null
+    return 1
+  fi
   echo "==> Repo: $(git rev-parse --show-toplevel)"
   echo "==> Branch: $branch"
   echo "==> Remote: $REMOTE"
   echo "==> Depth: $DEPTH  Jobs: $JOBS"
 
   echo "==> [1/3] Fetch main repo (shallow)"
+  if ! git ls-remote --exit-code --heads "$REMOTE" "$branch" >/dev/null 2>&1; then
+    echo "ERROR: 远端不存在分支 $REMOTE/$branch"
+    popd >/dev/null
+    return 1
+  fi
   git fetch --depth "$DEPTH" "$REMOTE" "$branch"
-  git merge --ff-only "$REMOTE/$branch"
+  if ! git merge --ff-only "$REMOTE/$branch"; then
+    if ! git merge-base "$REMOTE/$branch" HEAD >/dev/null 2>&1; then
+      echo "WARN: unrelated histories, reset to $REMOTE/$branch"
+      git reset --hard "$REMOTE/$branch"
+    else
+      echo "ERROR: merge failed (not unrelated histories)."
+      popd >/dev/null
+      return 1
+    fi
+  fi
 
   if [[ -f .gitmodules ]]; then
     echo "==> [2/3] Sync submodules"
@@ -119,24 +148,25 @@ if [[ -n "$REPO" ]]; then
   exit $?
 fi
 
+found_any_repo=0
+for entry in "${EXTRA_REPOS[@]}"; do
+  name="${entry%%|*}"
+  url="${entry#*|}"
+  if [[ -d "$PWD/$name/.git" ]]; then
+    found_any_repo=1
+    update_repo "$PWD/$name" "$name"
+  else
+    echo "==> Skip: $name ($PWD/$name) not found."
+    echo "       Clone: $url"
+  fi
+done
+if [[ "${found_any_repo}" -eq 1 ]]; then
+  exit 0
+fi
+
 if [[ -d .git ]]; then
   update_repo "$PWD" "repo"
   exit $?
-fi
-
-if [[ -d pytorch/.git ]]; then
-  update_repo "$PWD/pytorch" "pytorch"
-  for entry in "${EXTRA_REPOS[@]}"; do
-    name="${entry%%|*}"
-    url="${entry#*|}"
-    if [[ -d "$PWD/$name/.git" ]]; then
-      update_repo "$PWD/$name" "$name"
-    else
-      echo "==> Skip: $name ($PWD/$name) not found."
-      echo "       Clone: $url"
-    fi
-  done
-  exit 0
 fi
 
 echo "ERROR: 找不到 pytorch repo。请用 --repo /path/to/pytorch 指定。"
