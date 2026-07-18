@@ -1,0 +1,70 @@
+{
+  ".gitmodules": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/concepts/project-overview.md",
+      ".codex/wiki/how-to/build-and-validation.md",
+      ".codex/wiki/how-to/upstream-update.md"
+    ],
+    "symbols": {}
+  },
+  "audio": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/concepts/project-overview.md"
+    ],
+    "symbols": {}
+  },
+  "build.sh": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/concepts/project-overview.md",
+      ".codex/wiki/how-to/build-and-validation.md"
+    ],
+    "symbols": {}
+  },
+  "flash-attention": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/concepts/project-overview.md"
+    ],
+    "symbols": {}
+  },
+  "pytorch": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/concepts/project-overview.md"
+    ],
+    "symbols": {}
+  },
+  "triton": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/concepts/project-overview.md"
+    ],
+    "symbols": {}
+  },
+  "update.sh": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/concepts/project-overview.md",
+      ".codex/wiki/how-to/upstream-update.md"
+    ],
+    "symbols": {}
+  },
+  "vision": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/concepts/project-overview.md"
+    ],
+    "symbols": {}
+  }
+}

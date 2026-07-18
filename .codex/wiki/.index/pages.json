@@ -1,0 +1,89 @@
+[
+  {
+    "anchor_count": 0,
+    "code_anchors": [],
+    "excerpt": "# 项目概览与架构边界 /tmp/project-overview.md",
+    "path": ".codex/wiki/concepts/project-overview.md",
+    "related_files": [
+      {
+        "path": ".gitmodules",
+        "role": "related"
+      },
+      {
+        "path": "build.sh",
+        "role": "related"
+      },
+      {
+        "path": "update.sh",
+        "role": "related"
+      },
+      {
+        "path": "pytorch",
+        "role": "related"
+      },
+      {
+        "path": "triton",
+        "role": "related"
+      },
+      {
+        "path": "vision",
+        "role": "related"
+      },
+      {
+        "path": "audio",
+        "role": "related"
+      },
+      {
+        "path": "flash-attention",
+        "role": "related"
+      }
+    ],
+    "scope": "root-orchestration",
+    "search_text": "项目概览与架构边界\nconcept\ncurrent\nroot-orchestration\n{\"title\": \"项目概览与架构边界\", \"type\": \"concept\", \"status\": \"current\", \"scope\": \"root-orchestration\", \"related_scopes\": [], \"related_files\": [\".gitmodules\", \"build.sh\", \"update.sh\", \"pytorch\", \"triton\", \"vision\", \"audio\", \"flash-attention\"], \"source_docs\": [], \"tags\": [\"architecture\", \"pytorch\"], \"last_checked\": \"2026-07-18\", \"updated\": \"2026-07-18T14:08:08Z\"}\n.gitmodules related build.sh related update.sh related pytorch related triton related vision related audio related flash-attention related\n\n\n# 项目概览与架构边界\n\n/tmp/project-overview.md\n",
+    "status": "current",
+    "title": "项目概览与架构边界",
+    "type": "concept"
+  },
+  {
+    "anchor_count": 0,
+    "code_anchors": [],
+    "excerpt": "# 源码构建与验证工作流 /tmp/build-workflow.md",
+    "path": ".codex/wiki/how-to/build-and-validation.md",
+    "related_files": [
+      {
+        "path": "build.sh",
+        "role": "related"
+      },
+      {
+        "path": ".gitmodules",
+        "role": "related"
+      }
+    ],
+    "scope": "root-orchestration",
+    "search_text": "源码构建与验证工作流\nhow-to\ncurrent\nroot-orchestration\n{\"title\": \"源码构建与验证工作流\", \"type\": \"how-to\", \"status\": \"current\", \"scope\": \"root-orchestration\", \"related_scopes\": [], \"related_files\": [\"build.sh\", \".gitmodules\"], \"source_docs\": [], \"tags\": [\"build\", \"validation\", \"cuda\"], \"last_checked\": \"2026-07-18\", \"updated\": \"2026-07-18T14:08:08Z\"}\nbuild.sh related .gitmodules related\n\n\n# 源码构建与验证工作流\n\n/tmp/build-workflow.md\n",
+    "status": "current",
+    "title": "源码构建与验证工作流",
+    "type": "how-to"
+  },
+  {
+    "anchor_count": 0,
+    "code_anchors": [],
+    "excerpt": "# 上游同步与子模块更新 /tmp/update-workflow.md",
+    "path": ".codex/wiki/how-to/upstream-update.md",
+    "related_files": [
+      {
+        "path": "update.sh",
+        "role": "related"
+      },
+      {
+        "path": ".gitmodules",
+        "role": "related"
+      }
+    ],
+    "scope": "root-orchestration",
+    "search_text": "上游同步与子模块更新\nhow-to\ncurrent\nroot-orchestration\n{\"title\": \"上游同步与子模块更新\", \"type\": \"how-to\", \"status\": \"current\", \"scope\": \"root-orchestration\", \"related_scopes\": [], \"related_files\": [\"update.sh\", \".gitmodules\"], \"source_docs\": [], \"tags\": [\"git\", \"submodule\", \"compatibility\"], \"last_checked\": \"2026-07-18\", \"updated\": \"2026-07-18T14:08:08Z\"}\nupdate.sh related .gitmodules related\n\n\n# 上游同步与子模块更新\n\n/tmp/update-workflow.md\n",
+    "status": "current",
+    "title": "上游同步与子模块更新",
+    "type": "how-to"
+  }
+]
