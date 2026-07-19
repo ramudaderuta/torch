@@ -79,7 +79,8 @@ require_configuration() {
     TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX
     TRITON_BUILD_WITH_CCACHE TRITON_PARALLEL_LINK_JOBS TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
     XDG_CACHE_HOME UV_CACHE_DIR PIP_CACHE_DIR TMPDIR PYTHONPYCACHEPREFIX
-    PYTORCH_USE_NATIVE_ARCH PYTORCH_USE_CUDA PYTORCH_USE_CUDNN PYTORCH_USE_NCCL PYTORCH_USE_CUSPARSELT PYTORCH_USE_CUDSS
+    PYTORCH_USE_NATIVE_ARCH PYTORCH_USE_CUDA PYTORCH_USE_CUDNN PYTORCH_USE_NCCL PYTORCH_USE_CUSPARSELT PYTORCH_CUSPARSELT_INCLUDE_DIR PYTORCH_CUSPARSELT_LIBRARY
+    PYTORCH_USE_CUDSS
     PYTORCH_USE_CUFILE PYTORCH_USE_MKLDNN PYTORCH_USE_OPENMP PYTORCH_USE_FLASH_ATTENTION PYTORCH_USE_MEM_EFF_ATTENTION
     PYTORCH_USE_DISTRIBUTED PYTORCH_USE_XPU PYTORCH_USE_ROCM PYTORCH_FORCE_CUDA PYTORCH_BUILD_TEST PYTORCH_CMAKE_BUILD_TYPE PYTORCH_CMAKE_POLICY_VERSION_MINIMUM
     FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT FLASH_ATTENTION_EINOPS_REQUIREMENT FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT
@@ -193,10 +194,10 @@ apply_submodule_patch() {
   local patch_file="$3"
 
   [[ -f "$patch_file" ]] || die "[$name] required patch is unavailable: $patch_file"
-  if git -C "$source_dir" apply --check "$patch_file"; then
+  if git -C "$source_dir" apply --check "$patch_file" 2>/dev/null; then
     log "[$name] applying $(basename "$patch_file")"
     git -C "$source_dir" apply "$patch_file"
-  elif git -C "$source_dir" apply --reverse --check "$patch_file"; then
+  elif git -C "$source_dir" apply --reverse --check "$patch_file" 2>/dev/null; then
     log "[$name] patch is already applied: $(basename "$patch_file")"
   else
     die "[$name] patch does not match the checked-out source: $patch_file"
@@ -344,7 +345,7 @@ configure_cuda_architectures() {
 check_system_dependencies() {
   local -a packages=(
     build-essential ninja-build gcc clang-21 ccache cmake git pkg-config
-    cudnn9-cuda-13 cudss nvshmem libnccl-dev libcutensor-dev libcusparselt-dev
+    cudnn9-cuda-13 cudss nvshmem libnccl-dev cutensor-cuda-13 cusparselt-cuda-13
     libopenblas-dev liblapack-dev libomp-21-dev intel-mkl-full
     libprotobuf-dev protobuf-compiler zlib1g-dev libssl-dev
     ffmpeg libjpeg-dev libpng-dev libwebp-dev libavcodec-dev libavformat-dev
@@ -438,7 +439,7 @@ build_pytorch() {
   wheel_dir="$(prepare_wheel_dir pytorch)"
   run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y torch || true
   clean_source PyTorch "$PYTORCH_SOURCE_DIR"
-  apply_submodule_patch PyTorch "$PYTORCH_SOURCE_DIR" "$PATCH_DIR/pytorch/cuda-13.1-clang21-compat.patch"
+  apply_submodule_patch PyTorch "$PYTORCH_SOURCE_DIR" "$PATCH_DIR/pytorch/cuda-13-clang21-compat.patch"
 
   (
     cd "$PYTORCH_SOURCE_DIR"
@@ -446,6 +447,7 @@ build_pytorch() {
     export PYTORCH_BUILD_VERSION PYTORCH_BUILD_NUMBER="$BUILD_NUMBER"
     export USE_NATIVE_ARCH="$PYTORCH_USE_NATIVE_ARCH" USE_CUDA="$PYTORCH_USE_CUDA" USE_CUDNN="$PYTORCH_USE_CUDNN"
     export USE_NCCL="$PYTORCH_USE_NCCL" USE_CUSPARSELT="$PYTORCH_USE_CUSPARSELT" USE_CUDSS="$PYTORCH_USE_CUDSS"
+    export CUSPARSELT_INCLUDE_DIR="$PYTORCH_CUSPARSELT_INCLUDE_DIR" CUSPARSELT_LIBRARY="$PYTORCH_CUSPARSELT_LIBRARY"
     export USE_CUFILE="$PYTORCH_USE_CUFILE" USE_MKLDNN="$PYTORCH_USE_MKLDNN" USE_OPENMP="$PYTORCH_USE_OPENMP"
     export USE_FLASH_ATTENTION="$PYTORCH_USE_FLASH_ATTENTION" USE_MEM_EFF_ATTENTION="$PYTORCH_USE_MEM_EFF_ATTENTION"
     export USE_DISTRIBUTED="$PYTORCH_USE_DISTRIBUTED" USE_XPU="$PYTORCH_USE_XPU" USE_ROCM="$PYTORCH_USE_ROCM"

@@ -6,7 +6,7 @@ scope: root-orchestration
 related_scopes: []
 related_files:
   - build.sh
-  - patches/pytorch/cuda-13.1-clang21-compat.patch
+  - patches/pytorch/cuda-13-clang21-compat.patch
   - patches/triton/ignore-generated-wheel-metadata.patch
   - requirements/build.in
   - scripts/verify_install.py
@@ -18,20 +18,21 @@ tags:
   - flash-attention
   - validation
 last_checked: 2026-07-19
-updated: 2026-07-19T07:42:15Z
+updated: 2026-07-19T08:15:00Z
 ---
 
 # 2026-07-19 Full CUDA Build Failures and Remedies
 
 ## Evidence
 
-The canonical `build.sh` completed all five local wheels on 2026-07-19: Triton, PyTorch, standalone Flash Attention 4, Torchvision, and Torchaudio. The installed project `.venv` then passed module provenance, CUDA 13.1, native SM120, CUDA matmul, Torchvision CUDA NMS, and FA4 FP16/BF16 forward and backward validation.
+The canonical `build.sh` completed all five local wheels on 2026-07-19: Triton, PyTorch, standalone Flash Attention 4, Torchvision, and Torchaudio. After the CUDA 13.3.73 migration, the installed project `.venv` passed module provenance, CUDA 13.3, native SM120, CUDA matmul, Torchvision CUDA NMS, and FA4 FP16/BF16 forward and backward validation. The unchanged PyTorch CUDA 13/Clang 21 patch applied cleanly and was compiled in this successful rebuild.
 
 ## Failures and fixes
 
 - Triton initially failed because its no-build-isolation build imported `nanobind==2.10.2`, which was absent from the root build lock. Add the exact requirement to `requirements/build.in` and regenerate the hash-locked file.
 - Clang 21 rejected a TensorPipe CUDA warning as an error because only the base `tensorpipe` target had the upstream suppression. The PyTorch compatibility patch applies the same suppression to `tensorpipe_cuda`.
-- CUDA 13.1 cuDSS uses `cudssDataType_t` and requires CSR offset, index, and value data types. The PyTorch compatibility patch changes `SparseCsrTensorMath.cu` to use `CUDSS_R_*` values and supply both `CUDSS_R_32I` arguments.
+- cuDSS 0.8 uses `cudssDataType_t` and requires CSR offset, index, and value data types. The PyTorch compatibility patch changes `SparseCsrTensorMath.cu` to use `CUDSS_R_*` values and supply both `CUDSS_R_32I` arguments.
+- CUDA 13's cuTENSOR 2.7 and cuSPARSELt 0.9 replace the old generic packages. The latter changes the runtime SONAME from `libcusparseLt.so.0`; wheels built against the removed 0.7 package cannot import and must be rebuilt. Set the CUDA 13-specific cuSPARSELt include and library directories explicitly so CMake selects 0.9.1.
 - `TRITON_BUILD_UT=0` was exported by the root script but omitted from Triton setup CMake passthrough, enabling unit-test targets and a CMake 4.4 GoogleTest JSON-discovery failure. Set Triton's supported `TRITON_APPEND_CMAKE_ARGS` entry point to pass `-DTRITON_BUILD_UT=0`.
 - FA4 requires `nvidia-cutlass-dsl` dev releases. The FA4 dependency install must explicitly allow prereleases.
 - Runtime validation must compare package public versions when a wheel adds PEP 440 local build metadata. FA4 reports a static module version and returns `(out, lse)`, so provenance validation bypasses its module version and validation uses the first tuple element while still checking type, values, and gradients.

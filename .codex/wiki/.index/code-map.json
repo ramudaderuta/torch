@@ -50,7 +50,7 @@
     ],
     "symbols": {}
   },
-  "patches/pytorch/cuda-13.1-clang21-compat.patch": {
+  "patches/pytorch/cuda-13-clang21-compat.patch": {
     "anchors": [],
     "definition_pages": [],
     "pages": [

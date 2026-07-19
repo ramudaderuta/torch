@@ -3,8 +3,9 @@ title: Project Wiki Index
 type: wiki-index
 status: current
 generated_by: /home/build/.codex/skills/wiki-note/scripts/wiki_note.py
-updated: 2026-07-19T07:55:43Z
+updated: 2026-07-19T09:04:59Z
 ---
+
 
 
 
@@ -38,7 +39,7 @@ updated: 2026-07-19T07:55:43Z
 # Project Wiki Index
 
 <!-- BEGIN AUTO -->
-- Last rebuilt: 2026-07-19T07:55:43Z
+- Last rebuilt: 2026-07-19T09:04:59Z
 - Page count: 4
 
 ## By Type
@@ -49,7 +50,7 @@ updated: 2026-07-19T07:55:43Z
 
 ### debugging
 
-- [2026-07-19 Full CUDA Build Failures and Remedies](debugging/full-cuda-build-failures-2026-07-19.md) | status: current | updated: 2026-07-19T07:42:15Z
+- [2026-07-19 Full CUDA Build Failures and Remedies](debugging/full-cuda-build-failures-2026-07-19.md) | status: current | updated: 2026-07-19T08:15:00Z
 
 ### how-to
 
@@ -67,7 +68,7 @@ updated: 2026-07-19T07:55:43Z
 
 ## Recently Updated
 
-- 2026-07-19T07:42:15Z | [2026-07-19 Full CUDA Build Failures and Remedies](debugging/full-cuda-build-failures-2026-07-19.md)
+- 2026-07-19T08:15:00Z | [2026-07-19 Full CUDA Build Failures and Remedies](debugging/full-cuda-build-failures-2026-07-19.md)
 - 2026-07-19T00:00:00Z | [Source Build and Validation](how-to/build-and-validation.md)
 - 2026-07-18T16:00:00Z | [上游同步与子模块更新](how-to/upstream-update.md)
 - 2026-07-18T14:08:08Z | [项目概览与架构边界](concepts/project-overview.md)
@@ -79,7 +80,7 @@ updated: 2026-07-19T07:55:43Z
 ## Code Navigation
 
 - [项目概览与架构边界](concepts/project-overview.md) | files: `.gitmodules`, `build.sh`, `update.sh` ... | anchors: 0 | status: current
-- [2026-07-19 Full CUDA Build Failures and Remedies](debugging/full-cuda-build-failures-2026-07-19.md) | files: `build.sh`, `patches/pytorch/cuda-13.1-clang21-compat.patch`, `patches/triton/ignore-generated-wheel-metadata.patch` ... | anchors: 0 | status: current
+- [2026-07-19 Full CUDA Build Failures and Remedies](debugging/full-cuda-build-failures-2026-07-19.md) | files: `build.sh`, `patches/pytorch/cuda-13-clang21-compat.patch`, `patches/triton/ignore-generated-wheel-metadata.patch` ... | anchors: 0 | status: current
 - [Source Build and Validation](how-to/build-and-validation.md) | files: `build.sh`, `.gitignore`, `flash-attention/flash_attn/cute/pyproject.toml` | anchors: 0 | status: current
 - [上游同步与子模块更新](how-to/upstream-update.md) | files: `update.sh`, `.gitmodules` | anchors: 0 | status: current
 
