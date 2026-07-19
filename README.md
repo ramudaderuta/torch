@@ -50,9 +50,9 @@ to build. They are not installed into a system or user Python environment.
 Shell orchestration lives in `build.sh`; the focused Python validation helpers
 it invokes are under `scripts/` and receive the exported local configuration.
 The preflight rejects Python/pip prefix overrides and confines the configured
-Triton, pip, uv, XDG, and temporary caches to `.build/`. Triton downloads its
-pinned LLVM there; this project rejects `LLVM_SYSPATH` to prevent an accidental
-host LLVM override.
+Triton, pip, uv, XDG, temporary, and Python bytecode caches to `.build/`.
+Triton downloads its pinned LLVM there; this project rejects `LLVM_SYSPATH` to
+prevent an accidental host LLVM override.
 
 ## Install artifacts
 

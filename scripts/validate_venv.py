@@ -8,10 +8,10 @@ from pathlib import Path
 BLOCKED_ENVIRONMENT_VARIABLES = (
     "PYTHONHOME",
     "PYTHONPATH",
+    "PYTHONUSERBASE",
     "PIP_PREFIX",
     "PIP_TARGET",
     "PIP_USER",
-    "PIP_CONFIG_FILE",
     "UV_SYSTEM_PYTHON",
 )
 
