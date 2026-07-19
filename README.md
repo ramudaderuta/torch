@@ -48,7 +48,7 @@ entry point always builds this complete set; it has no component-skip switches.
 Local wheels are installed into `.venv` only when a later component needs them
 to build. They are not installed into a system or user Python environment.
 Shell orchestration lives in `build.sh`; the focused Python validation helpers
-it invokes are under `script/` and receive the exported local configuration.
+it invokes are under `scripts/` and receive the exported local configuration.
 
 ## Install artifacts
 

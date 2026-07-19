@@ -3,6 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly TRITON_DISTRIBUTION_NAME="pytorch-triton"
+readonly FA4_DISTRIBUTION_NAME="flash-attn-4"
+export TRITON_DISTRIBUTION_NAME FA4_DISTRIBUTION_NAME
 
 # Optional local configuration. Keep this trusted shell-compatible KEY=VALUE file local.
 : "${ENV_FILE:=${ROOT_DIR}/.env}"
@@ -147,7 +150,7 @@ stage_and_install_wheel() {
 
   compgen -G "$wheel_dir/$wheel_pattern" >/dev/null || die "[$package_name] no wheel produced in $wheel_dir"
   ((${#wheels[@]} == 1)) || die "[$package_name] ambiguous wheel selection in $wheel_dir: $wheel_pattern"
-  wheel_metadata="$("$PYTHON" "$ROOT_DIR/script/validate_wheel_metadata.py" "${wheels[0]}" "$distribution_name")" \
+  wheel_metadata="$("$PYTHON" "$ROOT_DIR/scripts/validate_wheel_metadata.py" "${wheels[0]}" "$distribution_name")" \
     || die "[$package_name] wheel metadata validation failed"
   printf '%s\t%s\t%s\n' "$package_name" "$wheel_metadata" "$(basename "${wheels[0]}")" >>"${ROOT_DIR}/.build/manifests/wheels.tsv"
   cp -f -- "${wheels[0]}" "$DIST_DIR/"
@@ -162,7 +165,7 @@ ensure_project_venv() {
     uv venv --python "$PYTHON_VERSION" "$VENV_DIR" | tee -a "$MAIN_LOG"
   fi
 
-  "$PYTHON" "$ROOT_DIR/script/validate_venv.py" || die "Configured Python is not an isolated virtual environment: $PYTHON"
+  "$PYTHON" "$ROOT_DIR/scripts/validate_venv.py" || die "Configured Python is not an isolated virtual environment: $PYTHON"
 }
 
 validate_versions() {
@@ -171,7 +174,7 @@ validate_versions() {
   for variable in MAX_JOBS VERIFY_FA4_BATCH_SIZE VERIFY_FA4_SEQUENCE_LENGTH VERIFY_FA4_HEADS VERIFY_FA4_HEAD_DIM VERIFY_FA4_MAX_TENSOR_ELEMENTS; do
     [[ "${!variable}" =~ ^[1-9][0-9]*$ ]] || die "$variable must be a positive integer"
   done
-  "$PYTHON" "$ROOT_DIR/script/validate_build_config.py" || die "Configured build validation is invalid"
+  "$PYTHON" "$ROOT_DIR/scripts/validate_build_config.py" || die "Configured build validation is invalid"
 }
 
 write_provenance() {
@@ -347,7 +350,7 @@ build_triton() {
     export TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
     run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
-  stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl' pytorch-triton
+  stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl' "$TRITON_DISTRIBUTION_NAME"
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import triton; print('Triton:', triton.__version__)" | tee -a "$MAIN_LOG"
 }
 
@@ -373,7 +376,7 @@ build_pytorch() {
     run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
   stage_and_install_wheel PyTorch "$wheel_dir" 'torch-*.whl' torch
-  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))" | tee -a "$MAIN_LOG"
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); torch.cuda.is_available() or exit('CUDA not enabled'); print(torch.cuda.get_device_name(0))" | tee -a "$MAIN_LOG"
 }
 
 build_flash_attention() {
@@ -398,7 +401,7 @@ build_flash_attention() {
     "$FLASH_ATTENTION_CUTE_SOURCE_DIR" --wheel-dir "$wheel_dir" \
     --no-build-isolation --no-deps
 
-  stage_and_install_wheel "Flash Attention 4" "$wheel_dir" 'flash_attn_4*.whl' flash-attn-4
+  stage_and_install_wheel "Flash Attention 4" "$wheel_dir" 'flash_attn_4*.whl' "$FA4_DISTRIBUTION_NAME"
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "from flash_attn.cute import flash_attn_func; print('Flash Attention 4 import verified:', flash_attn_func)" | tee -a "$MAIN_LOG"
 }
 
@@ -452,7 +455,13 @@ build_audio() {
 verify_all() {
   [[ "$VERIFY_INSTALL" == "1" ]] || return
   section "Final verification"
-  "$PYTHON" "$ROOT_DIR/script/verify_install.py"
+  local verification_dir="${ROOT_DIR}/.build/verify-install"
+  rm -rf -- "$verification_dir"
+  mkdir -p "$verification_dir"
+  (
+    cd -- "$verification_dir"
+    "$PYTHON" "$ROOT_DIR/scripts/verify_install.py"
+  )
 }
 
 main() {

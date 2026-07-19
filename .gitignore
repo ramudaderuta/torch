@@ -7,6 +7,7 @@
 # Project-local build interpreter and retained wheel artifacts.
 .venv/
 dist/
+__pycache__/
 
 # Local wheel and build outputs.
 .build/
