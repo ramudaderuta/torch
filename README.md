@@ -49,8 +49,9 @@ After a successful build, `dist/requirements-runtime.txt` records the direct
 runtime requirements declared by the locally built wheels, including the CUDA
 13 Cutlass runtime libraries required by FA4. It keeps upstream version ranges
 instead of freezing the build virtual environment and excludes local wheels,
-test, lint, and build tools. Install the matching local wheels first, then
-resolve this runtime manifest:
+test, lint, and build tools. To install into another compatible environment,
+first install the matching local Torch, Triton, xFormers, and FA4 wheels from
+`dist/`, then resolve this runtime manifest:
 
 ```bash
 python -m pip install /path/to/torch/dist/torch-*.whl \
