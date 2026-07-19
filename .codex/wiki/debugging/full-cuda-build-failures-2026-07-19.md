@@ -7,6 +7,7 @@ related_scopes: []
 related_files:
   - build.sh
   - patches/pytorch/cuda-13-clang21-compat.patch
+  - patches/pytorch/cudss-0.8-api-compat.patch
   - patches/triton/ignore-generated-wheel-metadata.patch
   - requirements/build.in
   - scripts/verify_install.py
@@ -18,20 +19,20 @@ tags:
   - flash-attention
   - validation
 last_checked: 2026-07-19
-updated: 2026-07-19T08:15:00Z
+updated: 2026-07-19T09:15:00Z
 ---
 
 # 2026-07-19 Full CUDA Build Failures and Remedies
 
 ## Evidence
 
-The canonical `build.sh` completed all five local wheels on 2026-07-19: Triton, PyTorch, standalone Flash Attention 4, Torchvision, and Torchaudio. After the CUDA 13.3.73 migration, the installed project `.venv` passed module provenance, CUDA 13.3, native SM120, CUDA matmul, Torchvision CUDA NMS, and FA4 FP16/BF16 forward and backward validation. The unchanged PyTorch CUDA 13/Clang 21 patch applied cleanly and was compiled in this successful rebuild.
+The canonical `build.sh` completed all five local wheels on 2026-07-19: Triton, PyTorch, standalone Flash Attention 4, Torchvision, and Torchaudio. After the CUDA 13.3.73 migration, the installed project `.venv` passed module provenance, CUDA 13.3, native SM120, CUDA matmul, Torchvision CUDA NMS, and FA4 FP16/BF16 forward and backward validation. PyTorch, Torchvision, and Torchaudio build versions in `.env` match their checked-out source version files; Triton and FA4 derive their versions from upstream metadata and the configured wheel suffix.
 
 ## Failures and fixes
 
 - Triton initially failed because its no-build-isolation build imported `nanobind==2.10.2`, which was absent from the root build lock. Add the exact requirement to `requirements/build.in` and regenerate the hash-locked file.
 - Clang 21 rejected a TensorPipe CUDA warning as an error because only the base `tensorpipe` target had the upstream suppression. The PyTorch compatibility patch applies the same suppression to `tensorpipe_cuda`.
-- cuDSS 0.8 uses `cudssDataType_t` and requires CSR offset, index, and value data types. The PyTorch compatibility patch changes `SparseCsrTensorMath.cu` to use `CUDSS_R_*` values and supply both `CUDSS_R_32I` arguments.
+- cuDSS 0.8 changes the API to `cudssDataType_t` and requires CSR offset, index, and value data types. Keep that source correction in the separate `cudss-0.8-api-compat.patch`, including the CSR `rowEnd` pointer at `rowOffsets + 1`. It applies cleanly, but cuDSS 0.8.0 returns `CUDSS_STATUS_NOT_SUPPORTED` for both 32-bit and 64-bit CSR descriptors on the RTX 5090 (SM120), including through a minimal direct C++ probe. Set `PYTORCH_USE_CUDSS=0` until a newer cuDSS release passes that probe on this GPU; the build then excludes the unsupported backend while retaining CUDA support.
 - CUDA 13's cuTENSOR 2.7 and cuSPARSELt 0.9 replace the old generic packages. The latter changes the runtime SONAME from `libcusparseLt.so.0`; wheels built against the removed 0.7 package cannot import and must be rebuilt. Set the CUDA 13-specific cuSPARSELt include and library directories explicitly so CMake selects 0.9.1.
 - `TRITON_BUILD_UT=0` was exported by the root script but omitted from Triton setup CMake passthrough, enabling unit-test targets and a CMake 4.4 GoogleTest JSON-discovery failure. Set Triton's supported `TRITON_APPEND_CMAKE_ARGS` entry point to pass `-DTRITON_BUILD_UT=0`.
 - FA4 requires `nvidia-cutlass-dsl` dev releases. The FA4 dependency install must explicitly allow prereleases.
@@ -39,4 +40,4 @@ The canonical `build.sh` completed all five local wheels on 2026-07-19: Triton, 
 
 ## Operational boundary
 
-Run the entry point with `HOME` and `CCACHE_DIR` under root `.build/`. All created wheels, cache state, temporary files, and the venv remain in the project boundary or `/tmp`; do not install build dependencies globally. The script applies the version-controlled compatibility patches after it cleans each source tree and records their SHA-256 values in provenance. A patch mismatch stops the build, which makes an upstream update's compatibility failure explicit. The retained Triton Python egg-info directory is ignored as generated output by its build-time patch.
+Run the entry point with `HOME` and `CCACHE_DIR` under root `.build/`. All created wheels, cache state, temporary files, and the venv remain in the project boundary or `/tmp`; do not install build dependencies globally. The script applies the version-controlled compatibility patches after it cleans each source tree, records their SHA-256 values in provenance, and removes only the patches that it applied when the process exits. The Clang patch is always required; the cuDSS patch is applied only when `PYTORCH_USE_CUDSS=1`. A patch mismatch stops the build, which makes an upstream update's compatibility failure explicit. The retained Triton Python egg-info directory is ignored as generated output by its build-time patch.

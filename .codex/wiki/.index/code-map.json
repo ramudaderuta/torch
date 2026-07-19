@@ -58,6 +58,14 @@
     ],
     "symbols": {}
   },
+  "patches/pytorch/cudss-0.8-api-compat.patch": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/debugging/full-cuda-build-failures-2026-07-19.md"
+    ],
+    "symbols": {}
+  },
   "patches/triton/ignore-generated-wheel-metadata.patch": {
     "anchors": [],
     "definition_pages": [],

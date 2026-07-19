@@ -49,3 +49,9 @@ Append-only history for wiki updates caused by scope work, implementation closeo
 - Summary: Recorded CUDA 13.3 library migration, cuSPARSELt ABI rebuild requirement, and successful compatibility-patch verification.
 - Pages: debugging/full-cuda-build-failures-2026-07-19.md
 - Verification: build.sh; verify_install.py; wiki-note rebuild/lint/doctor
+
+## 2026-07-19T10:13:15Z [root-orchestration]
+
+- Summary: Recorded CUDA 13.3 library verification, cuDSS 0.8 SM120 incompatibility, disabled backend, split patches, and build parallelism increase.
+- Pages: debugging/full-cuda-build-failures-2026-07-19.md
+- Verification: PyTorch rebuild; verify_install.py; cuDSS probe; wiki-note rebuild/lint/doctor

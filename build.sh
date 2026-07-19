@@ -28,6 +28,28 @@ AUDIO_BUILD_LOG="${ROOT_DIR}/${AUDIO_BUILD_LOG_FILE:-audio_build.log}"
 
 CURRENT_STAGE="initialization"
 LOGS_INITIALIZED=0
+APPLIED_SUBMODULE_PATCHES=()
+
+cleanup_submodule_patches() {
+  local entry
+  local source_dir
+  local patch_file
+
+  for entry in "${APPLIED_SUBMODULE_PATCHES[@]}"; do
+    IFS=$'\t' read -r source_dir patch_file <<<"$entry"
+    if ! git -C "$source_dir" apply --reverse --check "$patch_file" 2>/dev/null \
+      || ! git -C "$source_dir" apply --reverse "$patch_file"; then
+      printf 'WARNING: could not remove build-time patch: %s\n' "$patch_file" >&2
+    fi
+  done
+}
+
+on_exit() {
+  local exit_code="$?"
+  trap - EXIT
+  cleanup_submodule_patches
+  exit "$exit_code"
+}
 
 on_error() {
   local exit_code="$1"
@@ -46,6 +68,7 @@ on_error() {
 }
 
 trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
+trap on_exit EXIT
 
 die() {
   if ((LOGS_INITIALIZED)); then
@@ -197,6 +220,7 @@ apply_submodule_patch() {
   if git -C "$source_dir" apply --check "$patch_file" 2>/dev/null; then
     log "[$name] applying $(basename "$patch_file")"
     git -C "$source_dir" apply "$patch_file"
+    APPLIED_SUBMODULE_PATCHES=("$source_dir"$'\t'"$patch_file" "${APPLIED_SUBMODULE_PATCHES[@]}")
   elif git -C "$source_dir" apply --reverse --check "$patch_file" 2>/dev/null; then
     log "[$name] patch is already applied: $(basename "$patch_file")"
   else
@@ -440,6 +464,9 @@ build_pytorch() {
   run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y torch || true
   clean_source PyTorch "$PYTORCH_SOURCE_DIR"
   apply_submodule_patch PyTorch "$PYTORCH_SOURCE_DIR" "$PATCH_DIR/pytorch/cuda-13-clang21-compat.patch"
+  if [[ "$PYTORCH_USE_CUDSS" == "1" ]]; then
+    apply_submodule_patch PyTorch "$PYTORCH_SOURCE_DIR" "$PATCH_DIR/pytorch/cudss-0.8-api-compat.patch"
+  fi
 
   (
     cd "$PYTORCH_SOURCE_DIR"
@@ -569,4 +596,6 @@ main() {
   log "Torchaudio log: $AUDIO_BUILD_LOG"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
