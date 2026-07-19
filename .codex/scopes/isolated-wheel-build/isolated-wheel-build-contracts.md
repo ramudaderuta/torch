@@ -10,6 +10,8 @@ description: API and schema contracts for isolated-wheel-build.
 configured venv, and writes artifacts to the configured root `dist/` path.
 `.env.example` is the tracked, credential-free template; `.env` remains the
 only mutable runtime configuration source.
+`script/` contains the Python venv, configuration, wheel-metadata, and final
+runtime validation helpers invoked by the shell orchestrator.
 
 ## Shared Types / Schemas
 

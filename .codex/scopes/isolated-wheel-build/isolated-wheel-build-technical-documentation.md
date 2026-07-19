@@ -15,6 +15,11 @@ template. `build.sh` owns orchestration: it creates/validates
 The ignored build tree holds generated temporary wheel staging and provenance
 evidence.
 
+`script/validate_venv.py`, `script/validate_build_config.py`,
+`script/validate_wheel_metadata.py`, and `script/verify_install.py` own the
+corresponding Python-only checks. `build.sh` exports `.env` before invoking
+them, so they share the same configuration without shell heredocs.
+
 ## Key Constraints and Non-Goals
 
 - `dist/` is the artifact handoff; `.venv/` is disposable and ignored.

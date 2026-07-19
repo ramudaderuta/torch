@@ -147,27 +147,8 @@ stage_and_install_wheel() {
 
   compgen -G "$wheel_dir/$wheel_pattern" >/dev/null || die "[$package_name] no wheel produced in $wheel_dir"
   ((${#wheels[@]} == 1)) || die "[$package_name] ambiguous wheel selection in $wheel_dir: $wheel_pattern"
-  wheel_metadata="$("$PYTHON" - "${wheels[0]}" "$distribution_name" <<'PY'
-import sys
-from email.parser import Parser
-from zipfile import ZipFile
-from packaging.utils import canonicalize_name
-
-wheel_path, expected_name = sys.argv[1:]
-with ZipFile(wheel_path) as wheel:
-    metadata_files = [name for name in wheel.namelist() if name.endswith('.dist-info/METADATA')]
-    assert len(metadata_files) == 1, f"Expected one wheel METADATA file, found: {metadata_files}"
-    metadata = Parser().parsestr(wheel.read(metadata_files[0]).decode('utf-8'))
-
-actual_name = metadata.get('Name')
-version = metadata.get('Version')
-assert actual_name and version, f"Wheel metadata missing Name or Version: {wheel_path}"
-assert canonicalize_name(actual_name) == canonicalize_name(expected_name), (
-    f"Wheel distribution mismatch: expected {expected_name}, got {actual_name}"
-)
-print(f"{actual_name}\t{version}")
-PY
-)" || die "[$package_name] wheel metadata validation failed"
+  wheel_metadata="$("$PYTHON" "$ROOT_DIR/script/validate_wheel_metadata.py" "${wheels[0]}" "$distribution_name")" \
+    || die "[$package_name] wheel metadata validation failed"
   printf '%s\t%s\t%s\n' "$package_name" "$wheel_metadata" "$(basename "${wheels[0]}")" >>"${ROOT_DIR}/.build/manifests/wheels.tsv"
   cp -f -- "${wheels[0]}" "$DIST_DIR/"
   # Reinstall even at an unchanged version so validation cannot reuse an older wheel.
@@ -181,10 +162,7 @@ ensure_project_venv() {
     uv venv --python "$PYTHON_VERSION" "$VENV_DIR" | tee -a "$MAIN_LOG"
   fi
 
-  "$PYTHON" - <<'PY' || die "Configured Python is not an isolated virtual environment: $PYTHON"
-import sys
-raise SystemExit(sys.prefix == sys.base_prefix)
-PY
+  "$PYTHON" "$ROOT_DIR/script/validate_venv.py" || die "Configured Python is not an isolated virtual environment: $PYTHON"
 }
 
 validate_versions() {
@@ -193,45 +171,7 @@ validate_versions() {
   for variable in MAX_JOBS VERIFY_FA4_BATCH_SIZE VERIFY_FA4_SEQUENCE_LENGTH VERIFY_FA4_HEADS VERIFY_FA4_HEAD_DIM VERIFY_FA4_MAX_TENSOR_ELEMENTS; do
     [[ "${!variable}" =~ ^[1-9][0-9]*$ ]] || die "$variable must be a positive integer"
   done
-  "$PYTHON" - <<'PY' || die "Configured wheel version is not PEP 440 compatible"
-import math
-import os
-from packaging.version import Version
-
-
-def positive_float(name):
-    value = float(os.environ[name])
-    assert math.isfinite(value) and value >= 0, f"{name} must be a finite non-negative number"
-
-
-Version(f"{os.environ['VISION_BUILD_VERSION']}.post{os.environ['BUILD_NUMBER']}")
-Version(f"{os.environ['AUDIO_BUILD_VERSION']}.post{os.environ['BUILD_NUMBER']}")
-for name in ("VERIFY_FA4_RTOL", "VERIFY_FA4_ATOL"):
-    positive_float(name)
-
-dtype_names = os.environ["VERIFY_FA4_DTYPES"].split()
-allowed_dtypes = {"float16", "bfloat16"}
-assert dtype_names and set(dtype_names).issubset(allowed_dtypes), (
-    f"VERIFY_FA4_DTYPES must contain only {sorted(allowed_dtypes)}"
-)
-assert len(dtype_names) == len(set(dtype_names)), "VERIFY_FA4_DTYPES must not repeat a dtype"
-
-head_dim = int(os.environ["VERIFY_FA4_HEAD_DIM"])
-allowed_head_dims = {int(value) for value in os.environ["VERIFY_FA4_ALLOWED_HEAD_DIMS"].split()}
-assert allowed_head_dims and head_dim in allowed_head_dims, (
-    f"VERIFY_FA4_HEAD_DIM={head_dim} is not allowed: {sorted(allowed_head_dims)}"
-)
-elements = (
-    int(os.environ["VERIFY_FA4_BATCH_SIZE"])
-    * int(os.environ["VERIFY_FA4_SEQUENCE_LENGTH"])
-    * int(os.environ["VERIFY_FA4_HEADS"])
-    * head_dim
-)
-assert elements <= int(os.environ["VERIFY_FA4_MAX_TENSOR_ELEMENTS"]), (
-    f"FA4 verification tensor has {elements} elements, exceeding "
-    f"VERIFY_FA4_MAX_TENSOR_ELEMENTS={os.environ['VERIFY_FA4_MAX_TENSOR_ELEMENTS']}"
-)
-PY
+  "$PYTHON" "$ROOT_DIR/script/validate_build_config.py" || die "Configured build validation is invalid"
 }
 
 write_provenance() {
@@ -512,111 +452,7 @@ build_audio() {
 verify_all() {
   [[ "$VERIFY_INSTALL" == "1" ]] || return
   section "Final verification"
-  "$PYTHON" - <<'PY'
-import sys
-import os
-from importlib import metadata
-from pathlib import Path
-import torch
-import torchaudio
-import torchvision
-import triton
-import flash_attn.cute as flash_attn_cute
-from flash_attn.cute import flash_attn_func
-
-
-def report_package(label, module, distribution_name):
-    distribution = metadata.distribution(distribution_name)
-    module_path = Path(module.__file__).resolve()
-    environment_root = Path(sys.prefix).resolve()
-    distribution_root = Path(distribution.locate_file("")).resolve()
-    assert module_path.is_relative_to(environment_root), (
-        f"{label} imported outside the configured venv: {module_path} "
-        f"(venv: {environment_root})"
-    )
-    assert distribution_root.is_relative_to(environment_root), (
-        f"{label} distribution is outside the configured venv: {distribution_root} "
-        f"(venv: {environment_root})"
-    )
-    module_version = getattr(module, "__version__", None)
-    if module_version is not None:
-        assert module_version == distribution.version, (
-            f"{label} module/distribution version mismatch: "
-            f"{module_version} != {distribution.version}"
-        )
-    print(
-        f"{label}: version={distribution.version} distribution="
-        f"{distribution.metadata['Name']} module={module_path} "
-        f"distribution_root={distribution_root}"
-    )
-
-print("Python:", sys.version)
-report_package("Triton", triton, "pytorch-triton")
-report_package("PyTorch", torch, "torch")
-report_package("Torchvision", torchvision, "torchvision")
-report_package("Torchaudio", torchaudio, "torchaudio")
-report_package("Flash Attention 4", flash_attn_cute, "flash-attn-4")
-print("PyTorch CUDA:", torch.version.cuda)
-assert torch.cuda.is_available(), "CUDA not enabled"
-assert torch.backends.cudnn.is_available(), "cuDNN extension not compiled"
-print("Torchvision extension marker:", getattr(torchvision, "_HAS_OPS", "unavailable"))
-major, minor = torch.cuda.get_device_capability()
-expected_arch = f"sm_{major}{minor}"
-compiled_arches = torch.cuda.get_arch_list()
-assert expected_arch in compiled_arches, (
-    f"Current GPU requires native {expected_arch}, but PyTorch contains: "
-    f"{compiled_arches}"
-)
-x = torch.randn(10, 10, device="cuda")
-matmul = x @ x
-assert torch.isfinite(matmul).all(), "CUDA matmul produced non-finite output"
-print("CUDA matrix multiplication norm:", matmul.norm().item())
-boxes = torch.tensor([[0, 0, 10, 10], [1, 1, 11, 11]], device="cuda", dtype=torch.float32)
-nms_result = torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device="cuda"), 0.5)
-assert nms_result.tolist() == [0], f"Unexpected Torchvision CUDA NMS result: {nms_result.tolist()}"
-print("Torchvision CUDA NMS:", nms_result.tolist())
-dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16}
-dtype_names = os.environ["VERIFY_FA4_DTYPES"].split()
-assert dtype_names, "VERIFY_FA4_DTYPES must name at least one dtype"
-assert set(dtype_names).issubset(dtype_map), f"Unsupported FA4 dtypes: {dtype_names}"
-for dtype_name in dtype_names:
-    dtype = dtype_map[dtype_name]
-    for causal in (False, True):
-        q = torch.randn(
-            int(os.environ["VERIFY_FA4_BATCH_SIZE"]),
-            int(os.environ["VERIFY_FA4_SEQUENCE_LENGTH"]),
-            int(os.environ["VERIFY_FA4_HEADS"]),
-            int(os.environ["VERIFY_FA4_HEAD_DIM"]),
-            device="cuda",
-            dtype=dtype,
-            requires_grad=True,
-        )
-        k = torch.randn_like(q, requires_grad=True)
-        v = torch.randn_like(q, requires_grad=True)
-        output = flash_attn_func(q, k, v, causal=causal)
-        assert torch.isfinite(output).all(), f"FA4 produced non-finite {dtype} output"
-        reference = torch.nn.functional.scaled_dot_product_attention(
-            q.detach().transpose(1, 2),
-            k.detach().transpose(1, 2),
-            v.detach().transpose(1, 2),
-            is_causal=causal,
-        ).transpose(1, 2)
-        torch.testing.assert_close(
-            output.detach(),
-            reference,
-            rtol=float(os.environ["VERIFY_FA4_RTOL"]),
-            atol=float(os.environ["VERIFY_FA4_ATOL"]),
-        )
-        output.float().sum().backward()
-        for tensor_name, tensor in (("q", q), ("k", k), ("v", v)):
-            assert tensor.grad is not None, f"FA4 {tensor_name} gradient missing for {dtype}, causal={causal}"
-            assert torch.isfinite(tensor.grad).all(), f"FA4 {tensor_name} gradient is non-finite for {dtype}, causal={causal}"
-        print(
-            "Flash Attention 4:",
-            f"dtype={dtype} causal={causal} shape={tuple(output.shape)} backward=ok",
-        )
-print("All components verified successfully")
-PY
+  "$PYTHON" "$ROOT_DIR/script/verify_install.py"
 }
 
 main() {
