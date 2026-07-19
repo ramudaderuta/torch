@@ -70,7 +70,8 @@ require_configuration() {
     VISION_USE_GPU_VIDEO_DECODER VISION_USE_CPU_VIDEO_DECODER VISION_USE_PNG VISION_USE_JPEG VISION_USE_WEBP VISION_USE_NVJPEG
     VISION_FORCE_CUDA VISION_BUILD_TEST VISION_CMAKE_BUILD_TYPE VISION_CMAKE_POLICY_VERSION_MINIMUM VISION_INCLUDE VISION_LIBRARY
     AUDIO_USE_CUDA AUDIO_FORCE_CUDA AUDIO_BUILD_TEST AUDIO_CMAKE_BUILD_TYPE
-    VERIFY_FA4_DTYPES VERIFY_FA4_BATCH_SIZE VERIFY_FA4_SEQUENCE_LENGTH VERIFY_FA4_HEADS VERIFY_FA4_HEAD_DIM VERIFY_FA4_RTOL VERIFY_FA4_ATOL
+    VERIFY_FA4_DTYPES VERIFY_FA4_BATCH_SIZE VERIFY_FA4_SEQUENCE_LENGTH VERIFY_FA4_HEADS VERIFY_FA4_HEAD_DIM VERIFY_FA4_ALLOWED_HEAD_DIMS
+    VERIFY_FA4_MAX_TENSOR_ELEMENTS VERIFY_FA4_RTOL VERIFY_FA4_ATOL
   )
 
   for variable in "${required_variables[@]}"; do
@@ -140,10 +141,34 @@ stage_and_install_wheel() {
   local package_name="$1"
   local wheel_dir="$2"
   local wheel_pattern="$3"
+  local distribution_name="$4"
   local -a wheels=("$wheel_dir"/$wheel_pattern)
+  local wheel_metadata
 
   compgen -G "$wheel_dir/$wheel_pattern" >/dev/null || die "[$package_name] no wheel produced in $wheel_dir"
   ((${#wheels[@]} == 1)) || die "[$package_name] ambiguous wheel selection in $wheel_dir: $wheel_pattern"
+  wheel_metadata="$("$PYTHON" - "${wheels[0]}" "$distribution_name" <<'PY'
+import sys
+from email.parser import Parser
+from zipfile import ZipFile
+from packaging.utils import canonicalize_name
+
+wheel_path, expected_name = sys.argv[1:]
+with ZipFile(wheel_path) as wheel:
+    metadata_files = [name for name in wheel.namelist() if name.endswith('.dist-info/METADATA')]
+    assert len(metadata_files) == 1, f"Expected one wheel METADATA file, found: {metadata_files}"
+    metadata = Parser().parsestr(wheel.read(metadata_files[0]).decode('utf-8'))
+
+actual_name = metadata.get('Name')
+version = metadata.get('Version')
+assert actual_name and version, f"Wheel metadata missing Name or Version: {wheel_path}"
+assert canonicalize_name(actual_name) == canonicalize_name(expected_name), (
+    f"Wheel distribution mismatch: expected {expected_name}, got {actual_name}"
+)
+print(f"{actual_name}\t{version}")
+PY
+)" || die "[$package_name] wheel metadata validation failed"
+  printf '%s\t%s\t%s\n' "$package_name" "$wheel_metadata" "$(basename "${wheels[0]}")" >>"${ROOT_DIR}/.build/manifests/wheels.tsv"
   cp -f -- "${wheels[0]}" "$DIST_DIR/"
   # Reinstall even at an unchanged version so validation cannot reuse an older wheel.
   run_with_log "$MAIN_LOG" "$PYTHON" -m pip install --force-reinstall --no-deps "${wheels[0]}"
@@ -164,11 +189,48 @@ PY
 
 validate_versions() {
   [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || die "BUILD_NUMBER must be a non-negative integer"
+  local variable
+  for variable in MAX_JOBS VERIFY_FA4_BATCH_SIZE VERIFY_FA4_SEQUENCE_LENGTH VERIFY_FA4_HEADS VERIFY_FA4_HEAD_DIM VERIFY_FA4_MAX_TENSOR_ELEMENTS; do
+    [[ "${!variable}" =~ ^[1-9][0-9]*$ ]] || die "$variable must be a positive integer"
+  done
   "$PYTHON" - <<'PY' || die "Configured wheel version is not PEP 440 compatible"
+import math
 import os
 from packaging.version import Version
+
+
+def positive_float(name):
+    value = float(os.environ[name])
+    assert math.isfinite(value) and value >= 0, f"{name} must be a finite non-negative number"
+
+
 Version(f"{os.environ['VISION_BUILD_VERSION']}.post{os.environ['BUILD_NUMBER']}")
 Version(f"{os.environ['AUDIO_BUILD_VERSION']}.post{os.environ['BUILD_NUMBER']}")
+for name in ("VERIFY_FA4_RTOL", "VERIFY_FA4_ATOL"):
+    positive_float(name)
+
+dtype_names = os.environ["VERIFY_FA4_DTYPES"].split()
+allowed_dtypes = {"float16", "bfloat16"}
+assert dtype_names and set(dtype_names).issubset(allowed_dtypes), (
+    f"VERIFY_FA4_DTYPES must contain only {sorted(allowed_dtypes)}"
+)
+assert len(dtype_names) == len(set(dtype_names)), "VERIFY_FA4_DTYPES must not repeat a dtype"
+
+head_dim = int(os.environ["VERIFY_FA4_HEAD_DIM"])
+allowed_head_dims = {int(value) for value in os.environ["VERIFY_FA4_ALLOWED_HEAD_DIMS"].split()}
+assert allowed_head_dims and head_dim in allowed_head_dims, (
+    f"VERIFY_FA4_HEAD_DIM={head_dim} is not allowed: {sorted(allowed_head_dims)}"
+)
+elements = (
+    int(os.environ["VERIFY_FA4_BATCH_SIZE"])
+    * int(os.environ["VERIFY_FA4_SEQUENCE_LENGTH"])
+    * int(os.environ["VERIFY_FA4_HEADS"])
+    * head_dim
+)
+assert elements <= int(os.environ["VERIFY_FA4_MAX_TENSOR_ELEMENTS"]), (
+    f"FA4 verification tensor has {elements} elements, exceeding "
+    f"VERIFY_FA4_MAX_TENSOR_ELEMENTS={os.environ['VERIFY_FA4_MAX_TENSOR_ELEMENTS']}"
+)
 PY
 }
 
@@ -301,6 +363,7 @@ preflight() {
   ensure_project_venv
   [[ -f "$BUILD_CONSTRAINTS_FILE" ]] || die "Build constraints are unavailable: $BUILD_CONSTRAINTS_FILE"
   mkdir -p "$DIST_DIR" "${ROOT_DIR}/.build/manifests"
+  : >"${ROOT_DIR}/.build/manifests/wheels.tsv"
   require_cmd git
   require_cmd "$CMAKE_COMMAND"
   require_cmd "$NINJA_COMMAND"
@@ -344,7 +407,7 @@ build_triton() {
     export TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
     run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
-  stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl'
+  stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl' pytorch-triton
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import triton; print('Triton:', triton.__version__)" | tee -a "$MAIN_LOG"
 }
 
@@ -369,7 +432,7 @@ build_pytorch() {
     export CMAKE_BUILD_TYPE="$PYTORCH_CMAKE_BUILD_TYPE" CMAKE_POLICY_VERSION_MINIMUM="$PYTORCH_CMAKE_POLICY_VERSION_MINIMUM"
     run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
-  stage_and_install_wheel PyTorch "$wheel_dir" 'torch-*.whl'
+  stage_and_install_wheel PyTorch "$wheel_dir" 'torch-*.whl' torch
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))" | tee -a "$MAIN_LOG"
 }
 
@@ -395,7 +458,7 @@ build_flash_attention() {
     "$FLASH_ATTENTION_CUTE_SOURCE_DIR" --wheel-dir "$wheel_dir" \
     --no-build-isolation --no-deps
 
-  stage_and_install_wheel "Flash Attention 4" "$wheel_dir" 'flash_attn_4*.whl'
+  stage_and_install_wheel "Flash Attention 4" "$wheel_dir" 'flash_attn_4*.whl' flash-attn-4
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "from flash_attn.cute import flash_attn_func; print('Flash Attention 4 import verified:', flash_attn_func)" | tee -a "$MAIN_LOG"
 }
 
@@ -422,7 +485,7 @@ build_vision() {
     export TORCHVISION_INCLUDE="$VISION_INCLUDE" TORCHVISION_LIBRARY="$VISION_LIBRARY"
     run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
-  stage_and_install_wheel Torchvision "$wheel_dir" 'torchvision-*.whl'
+  stage_and_install_wheel Torchvision "$wheel_dir" 'torchvision-*.whl' torchvision
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchvision; print('Torchvision:', torchvision.__version__); from torchvision.ops import nms" | tee -a "$MAIN_LOG"
 }
 
@@ -442,7 +505,7 @@ build_audio() {
     export CMAKE_BUILD_TYPE="$AUDIO_CMAKE_BUILD_TYPE"
     run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
-  stage_and_install_wheel Torchaudio "$wheel_dir" 'torchaudio-*.whl'
+  stage_and_install_wheel Torchaudio "$wheel_dir" 'torchaudio-*.whl' torchaudio
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchaudio; from torchaudio import _extension; print('Torchaudio:', torchaudio.__version__, 'extension:', _extension._IS_TORCHAUDIO_EXT_AVAILABLE)" | tee -a "$MAIN_LOG"
 }
 
@@ -466,8 +529,13 @@ def report_package(label, module, distribution_name):
     distribution = metadata.distribution(distribution_name)
     module_path = Path(module.__file__).resolve()
     environment_root = Path(sys.prefix).resolve()
+    distribution_root = Path(distribution.locate_file("")).resolve()
     assert module_path.is_relative_to(environment_root), (
         f"{label} imported outside the configured venv: {module_path} "
+        f"(venv: {environment_root})"
+    )
+    assert distribution_root.is_relative_to(environment_root), (
+        f"{label} distribution is outside the configured venv: {distribution_root} "
         f"(venv: {environment_root})"
     )
     module_version = getattr(module, "__version__", None)
@@ -479,7 +547,7 @@ def report_package(label, module, distribution_name):
     print(
         f"{label}: version={distribution.version} distribution="
         f"{distribution.metadata['Name']} module={module_path} "
-        f"distribution_root={distribution.locate_file('')}"
+        f"distribution_root={distribution_root}"
     )
 
 print("Python:", sys.version)
@@ -491,7 +559,7 @@ report_package("Flash Attention 4", flash_attn_cute, "flash-attn-4")
 print("PyTorch CUDA:", torch.version.cuda)
 assert torch.cuda.is_available(), "CUDA not enabled"
 assert torch.backends.cudnn.is_available(), "cuDNN extension not compiled"
-assert torchvision._HAS_OPS, "Torchvision extension not compiled"
+print("Torchvision extension marker:", getattr(torchvision, "_HAS_OPS", "unavailable"))
 major, minor = torch.cuda.get_device_capability()
 expected_arch = f"sm_{major}{minor}"
 compiled_arches = torch.cuda.get_arch_list()
@@ -500,9 +568,13 @@ assert expected_arch in compiled_arches, (
     f"{compiled_arches}"
 )
 x = torch.randn(10, 10, device="cuda")
-print("CUDA matrix multiplication norm:", (x @ x).norm().item())
+matmul = x @ x
+assert torch.isfinite(matmul).all(), "CUDA matmul produced non-finite output"
+print("CUDA matrix multiplication norm:", matmul.norm().item())
 boxes = torch.tensor([[0, 0, 10, 10], [1, 1, 11, 11]], device="cuda", dtype=torch.float32)
-print("Torchvision CUDA NMS:", torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device="cuda"), 0.5).tolist())
+nms_result = torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device="cuda"), 0.5)
+assert nms_result.tolist() == [0], f"Unexpected Torchvision CUDA NMS result: {nms_result.tolist()}"
+print("Torchvision CUDA NMS:", nms_result.tolist())
 dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16}
 dtype_names = os.environ["VERIFY_FA4_DTYPES"].split()
 assert dtype_names, "VERIFY_FA4_DTYPES must name at least one dtype"
@@ -535,11 +607,10 @@ for dtype_name in dtype_names:
             rtol=float(os.environ["VERIFY_FA4_RTOL"]),
             atol=float(os.environ["VERIFY_FA4_ATOL"]),
         )
-        output.square().mean().backward()
-        assert all(
-            gradient is not None and torch.isfinite(gradient).all()
-            for gradient in (q.grad, k.grad, v.grad)
-        ), f"FA4 backward failed for {dtype}, causal={causal}"
+        output.float().sum().backward()
+        for tensor_name, tensor in (("q", q), ("k", k), ("v", v)):
+            assert tensor.grad is not None, f"FA4 {tensor_name} gradient missing for {dtype}, causal={causal}"
+            assert torch.isfinite(tensor.grad).all(), f"FA4 {tensor_name} gradient is non-finite for {dtype}, causal={causal}"
         print(
             "Flash Attention 4:",
             f"dtype={dtype} causal={causal} shape={tuple(output.shape)} backward=ok",
@@ -551,6 +622,7 @@ PY
 main() {
   require_configuration
   preflight
+  # This entry point intentionally builds and verifies all five components.
   build_triton
   build_pytorch
   build_flash_attention

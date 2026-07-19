@@ -54,7 +54,8 @@ never dumps the environment. It rejects an external/non-venv target interpreter
 and records dependency/submodule provenance without index credentials. It writes
 provenance before runtime validation and updates it to a failed status through
 the `ERR` trap, including source commits, tool versions, configured build
-versions, CUDA architecture targets, and wheel checksums.
+versions, CUDA architecture targets, wheel checksums, and selected wheel
+metadata.
 
 ## Test Strategy
 
@@ -62,4 +63,6 @@ Use shell syntax, venv isolation, configuration, diff, scope, and wiki checks
 in this scope. A future full build validates imports and distribution paths,
 the exact native CUDA architecture list, Torchvision CUDA NMS, Torchaudio
 extension availability, and FA4 FP16/BF16 causal/non-causal forward, reference,
-and backward execution separately.
+and backward execution separately. FA4 validation configuration fails in
+preflight when dtype, size, head-dimension, tolerance, or tensor-size limits
+are invalid.

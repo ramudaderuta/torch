@@ -17,6 +17,8 @@ only mutable runtime configuration source.
 non-negative integer. Vision and Audio final versions must parse as PEP 440.
 The local configuration groups general settings, source paths, toolchain,
 Triton, PyTorch, FA4, Torchvision, Torchaudio, and FA4 verification settings.
+The entry point is intentionally fixed to all five components; it does not
+define component-skip settings.
 
 ## Event and Streaming Contracts
 
@@ -37,6 +39,10 @@ silently reused. Final validation confirms the module and distribution versions
 and paths resolve within that venv. FA4's dependencies constrain Torch to the
 local wheel version. CUDA validation requires an exact native
 `sm_<major><minor>` entry for the active device in `torch.cuda.get_arch_list()`.
+Before installation, the wheel's own `METADATA` must name the expected
+distribution, and its name/version are recorded in the provenance manifest.
+FA4 verification inputs are validated before component builds, including the
+allowed dtype/head-dimension sets and a tensor-element limit.
 
 ## Requirement Boundary Notes
 

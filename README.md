@@ -43,9 +43,10 @@ its in-tree attention implementation. The standalone FA4 wheel is built from
 there, and writes wheels to `dist/`. It may clean untracked files in source
 submodules when `CLEAN_BUILD=1`; review that setting before running it.
 
-The build order is Triton, PyTorch, FA4, Torchvision, then Torchaudio. Local
-wheels are installed into `.venv` only when a later component needs them to
-build. They are not installed into a system or user Python environment.
+The build order is Triton, PyTorch, FA4, Torchvision, then Torchaudio. The
+entry point always builds this complete set; it has no component-skip switches.
+Local wheels are installed into `.venv` only when a later component needs them
+to build. They are not installed into a system or user Python environment.
 
 ## Install artifacts
 
