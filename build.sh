@@ -8,6 +8,7 @@ readonly TRITON_DISTRIBUTION_NAME="pytorch-triton"
 readonly FA4_DISTRIBUTION_NAME="flash-attn-4"
 readonly XFORMERS_DISTRIBUTION_NAME="xformers"
 readonly SAGEATTENTION3_DISTRIBUTION_NAME="sageattn3"
+readonly SAGEATTENTION3_PATCH_FILE="${PATCH_DIR}/sageattention3/cxx20-aten-compat.patch"
 export TRITON_DISTRIBUTION_NAME FA4_DISTRIBUTION_NAME XFORMERS_DISTRIBUTION_NAME SAGEATTENTION3_DISTRIBUTION_NAME
 
 # Required local configuration. Keep this trusted shell-compatible KEY=VALUE file local.
@@ -626,13 +627,17 @@ prepare_sageattention3_source() {
   rm -rf -- "$staging_dir"
   mkdir -p "$staging_dir"
   git -C "$SAGEATTENTION_SOURCE_DIR" archive --format=tar HEAD:sageattention3_blackwell | tar -x -C "$staging_dir"
+  [[ -f "$SAGEATTENTION3_PATCH_FILE" ]] || die "[SageAttention3] required patch is unavailable: $SAGEATTENTION3_PATCH_FILE"
+  git -C "$ROOT_DIR" apply --check --directory=.build/sources/sageattention3 "$SAGEATTENTION3_PATCH_FILE" \
+    || die "[SageAttention3] patch does not match staged source: $SAGEATTENTION3_PATCH_FILE"
+  git -C "$ROOT_DIR" apply --directory=.build/sources/sageattention3 "$SAGEATTENTION3_PATCH_FILE"
   printf '%s\n' "$staging_dir"
 }
 
 build_sageattention3() {
   section "[5/7] SageAttention3 (Blackwell)"
   require_source SageAttention3 "$SAGEATTENTION3_SOURCE_DIR"
-  if component_cache_hit sageattention3 "$SAGEATTENTION_SOURCE_DIR" "$SAGEATTENTION3_EXT_PARALLEL" \
+  if component_cache_hit sageattention3 "$SAGEATTENTION_SOURCE_DIR" "$SAGEATTENTION3_EXT_PARALLEL|$(sha256sum "$SAGEATTENTION3_PATCH_FILE")" \
     'from sageattn3 import sageattn3_blackwell'; then
     return
   fi

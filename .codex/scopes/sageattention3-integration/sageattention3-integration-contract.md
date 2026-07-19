@@ -14,6 +14,7 @@ description: Integrate the SageAttention3 Blackwell source build.
 
 - SageAttention3 is implemented under `sageattention/sageattention3_blackwell`, not the upstream repository root.
 - The upstream SageAttention3 setup clones CUTLASS into its build tree when missing and packages the distribution as `sageattn3`.
+- The current PyTorch ATen headers require C++20, while SageAttention3's upstream setup forces C++17 for both NVCC and host extension compilation.
 - Evidence: upstream README and `sageattention/sageattention3_blackwell/setup.py` at pinned commit `d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5`.
 
 ## Outcome
@@ -69,6 +70,7 @@ Forbidden changes:
 
 - `bash -n build.sh update.sh`.
 - Shell-function harnesses exercising chained cache keys, staging, and skip/rebuild behavior without CUDA compilation.
+- Verify the SageAttention3 staging patch replaces all three C++17 flags with C++20 before a full CUDA rebuild.
 - `git diff --check`, `git submodule status`, and targeted metadata inspection.
 - Repo-scope and wiki structural checks.
 
@@ -87,3 +89,4 @@ Forbidden changes:
 ## Execution Log / Evidence Updates
 
 - 2026-07-19: created single-contract scope, pinned upstream `main` at `d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5`, integrated the Blackwell-only build, and added chained incremental rebuild keys for all seven stages.
+- 2026-07-19: added `patches/sageattention3/cxx20-aten-compat.patch`; it applies only to the `.build` staging tree and is hashed into the SageAttention3 cache key.
