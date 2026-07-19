@@ -57,13 +57,14 @@ require_configuration() {
     INSTALL_BUILD_PYTHON_DEPS PYTORCH_SOURCE_DIR VISION_SOURCE_DIR AUDIO_SOURCE_DIR
     TRITON_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
     CUDA_HOME MAGMA_ROOT OPENMPI_ROOT NVCODEC_HOME
-    LLVM_CONFIG_PATH LLVM_SYSPATH PYTORCH_BUILD_VERSION VISION_BUILD_VERSION
+    LLVM_CONFIG_PATH PYTORCH_BUILD_VERSION VISION_BUILD_VERSION
     AUDIO_BUILD_VERSION
     MAIN_LOG_FILE TRITON_BUILD_LOG_FILE PYTORCH_BUILD_LOG_FILE FLASH_ATTENTION_BUILD_LOG_FILE VISION_BUILD_LOG_FILE AUDIO_BUILD_LOG_FILE
     BUILD_PKG_CONFIG_PREFIX GCC_COMMAND GXX_COMMAND CLANG_COMMAND CLANGXX_COMMAND CMAKE_COMMAND NINJA_COMMAND NVCC_COMMAND NVIDIA_SMI_COMMAND CCACHE_COMMAND
     TRITON_HOME TRITON_CACHE_DIR TRITON_CUPTI_INCLUDE_PATH TRITON_CUPTI_LIB_PATH TRITON_LIBDEVICE_PATH TRITON_LIBCUDA_PATH
     TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX
     TRITON_BUILD_WITH_CCACHE TRITON_PARALLEL_LINK_JOBS TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
+    XDG_CACHE_HOME UV_CACHE_DIR PIP_CACHE_DIR TMPDIR
     PYTORCH_USE_NATIVE_ARCH PYTORCH_USE_CUDA PYTORCH_USE_CUDNN PYTORCH_USE_NCCL PYTORCH_USE_CUSPARSELT PYTORCH_USE_CUDSS
     PYTORCH_USE_CUFILE PYTORCH_USE_MKLDNN PYTORCH_USE_OPENMP PYTORCH_USE_FLASH_ATTENTION PYTORCH_USE_MEM_EFF_ATTENTION
     PYTORCH_USE_DISTRIBUTED PYTORCH_USE_XPU PYTORCH_USE_ROCM PYTORCH_FORCE_CUDA PYTORCH_BUILD_TEST PYTORCH_CMAKE_BUILD_TYPE PYTORCH_CMAKE_POLICY_VERSION_MINIMUM
@@ -80,6 +81,47 @@ require_configuration() {
   for variable in "${required_variables[@]}"; do
     [[ -n "${!variable:-}" ]] || die "Missing required configuration in $ENV_FILE: $variable"
   done
+}
+
+reject_python_environment_overrides() {
+  local variable
+  local -a blocked_variables=(
+    PYTHONHOME PYTHONPATH PIP_PREFIX PIP_TARGET PIP_USER PIP_CONFIG_FILE UV_SYSTEM_PYTHON
+  )
+
+  for variable in "${blocked_variables[@]}"; do
+    [[ -z "${!variable:-}" ]] || die "$variable must be unset to preserve the project venv boundary"
+  done
+}
+
+configure_project_local_paths() {
+  local build_root
+  local path_name
+  local path_value
+  local resolved_path
+  local -a project_local_paths=(
+    TRITON_HOME TRITON_CACHE_DIR XDG_CACHE_HOME UV_CACHE_DIR PIP_CACHE_DIR TMPDIR
+  )
+
+  build_root="$(realpath -m -- "${ROOT_DIR}/.build")"
+  for path_name in "${project_local_paths[@]}"; do
+    path_value="${!path_name}"
+    resolved_path="$(realpath -m -- "$path_value")"
+    case "$resolved_path" in
+      "$build_root"/*) ;;
+      *) die "$path_name escapes the project build directory: $resolved_path" ;;
+    esac
+    printf -v "$path_name" '%s' "$resolved_path"
+    export "$path_name"
+  done
+
+  [[ "$(realpath -m -- "$VENV_DIR")" == "$(realpath -m -- "${ROOT_DIR}/.venv")" ]] \
+    || die "VENV_DIR must be the project venv: ${ROOT_DIR}/.venv"
+  [[ "$(realpath -m -- "$PYTHON")" == "$(realpath -m -- "${VENV_DIR}/bin/python")" ]] \
+    || die "PYTHON must be the interpreter in VENV_DIR: ${VENV_DIR}/bin/python"
+  [[ -z "${LLVM_SYSPATH:-}" ]] || die "LLVM_SYSPATH must be unset so Triton can obtain its pinned LLVM"
+  [[ "$TRITON_OFFLINE_BUILD" == "0" ]] || die "TRITON_OFFLINE_BUILD must be 0 when Triton downloads its pinned LLVM"
+  mkdir -p "$TRITON_HOME" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME" "$UV_CACHE_DIR" "$PIP_CACHE_DIR" "$TMPDIR"
 }
 
 log() {
@@ -155,7 +197,7 @@ stage_and_install_wheel() {
   printf '%s\t%s\t%s\n' "$package_name" "$wheel_metadata" "$(basename "${wheels[0]}")" >>"${ROOT_DIR}/.build/manifests/wheels.tsv"
   cp -f -- "${wheels[0]}" "$DIST_DIR/"
   # Reinstall even at an unchanged version so validation cannot reuse an older wheel.
-  run_with_log "$MAIN_LOG" "$PYTHON" -m pip install --force-reinstall --no-deps "${wheels[0]}"
+  run_with_log "$MAIN_LOG" "$PYTHON" -m pip --isolated install --force-reinstall --no-deps "${wheels[0]}"
 }
 
 ensure_project_venv() {
@@ -325,7 +367,7 @@ preflight() {
   check_system_dependencies
 
   if [[ "$CLEAR_PIP_CACHE" == "1" ]]; then
-    run_with_log "$MAIN_LOG" "$PYTHON" -m pip cache purge || true
+    run_with_log "$MAIN_LOG" "$PYTHON" -m pip --isolated cache purge || true
   fi
   if [[ "$INSTALL_BUILD_PYTHON_DEPS" == "1" ]]; then
     run_with_log "$MAIN_LOG" uv pip install --python "$PYTHON" --require-hashes -r "$BUILD_CONSTRAINTS_FILE"
@@ -339,7 +381,7 @@ build_triton() {
   require_source Triton "$TRITON_SOURCE_DIR"
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir triton)"
-  run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip uninstall -y triton pytorch-triton || true
+  run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y triton pytorch-triton || true
   clean_source Triton "$TRITON_SOURCE_DIR"
 
   (
@@ -348,7 +390,7 @@ build_triton() {
     export TRITON_LIBDEVICE_PATH TRITON_LIBCUDA_PATH TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH
     export TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX TRITON_BUILD_WITH_CCACHE TRITON_PARALLEL_LINK_JOBS
     export TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
-    run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
+    run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
   stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl' "$TRITON_DISTRIBUTION_NAME"
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import triton; print('Triton:', triton.__version__)" | tee -a "$MAIN_LOG"
@@ -359,7 +401,7 @@ build_pytorch() {
   require_source PyTorch "$PYTORCH_SOURCE_DIR"
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir pytorch)"
-  run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip uninstall -y torch || true
+  run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y torch || true
   clean_source PyTorch "$PYTORCH_SOURCE_DIR"
 
   (
@@ -373,7 +415,7 @@ build_pytorch() {
     export USE_DISTRIBUTED="$PYTORCH_USE_DISTRIBUTED" USE_XPU="$PYTORCH_USE_XPU" USE_ROCM="$PYTORCH_USE_ROCM"
     export FORCE_CUDA="$PYTORCH_FORCE_CUDA" BUILD_TEST="$PYTORCH_BUILD_TEST"
     export CMAKE_BUILD_TYPE="$PYTORCH_CMAKE_BUILD_TYPE" CMAKE_POLICY_VERSION_MINIMUM="$PYTORCH_CMAKE_POLICY_VERSION_MINIMUM"
-    run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
+    run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
   stage_and_install_wheel PyTorch "$wheel_dir" 'torch-*.whl' torch
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); torch.cuda.is_available() or exit('CUDA not enabled'); print(torch.cuda.get_device_name(0))" | tee -a "$MAIN_LOG"
@@ -392,12 +434,12 @@ build_flash_attention() {
   mkdir -p "$constraints_dir"
   printf 'torch==%s\n' "$torch_version" >"$constraints_file"
 
-  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip uninstall -y flash-attn flash-attn-4 || true
+  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y flash-attn flash-attn-4 || true
   run_with_log "$FLASH_ATTENTION_BUILD_LOG" uv pip install --python "$PYTHON" \
     --constraint "$constraints_file" \
     "$FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT" "$FLASH_ATTENTION_EINOPS_REQUIREMENT" "$FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT" \
     "$FLASH_ATTENTION_TVM_FFI_REQUIREMENT" "$FLASH_ATTENTION_TORCH_C_DLPACK_REQUIREMENT" "$FLASH_ATTENTION_QUACK_KERNELS_REQUIREMENT"
-  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip wheel \
+  run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip --isolated wheel \
     "$FLASH_ATTENTION_CUTE_SOURCE_DIR" --wheel-dir "$wheel_dir" \
     --no-build-isolation --no-deps
 
@@ -410,12 +452,12 @@ build_vision() {
   require_source Torchvision "$VISION_SOURCE_DIR"
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir vision)"
-  run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip uninstall -y torchvision || true
+  run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y torchvision || true
   clean_source Torchvision "$VISION_SOURCE_DIR"
 
   (
     cd "$VISION_SOURCE_DIR"
-    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip install "$VISION_PILLOW_REQUIREMENT" "$VISION_GDOWN_REQUIREMENT" "$VISION_SCIPY_REQUIREMENT"
+    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip --isolated install "$VISION_PILLOW_REQUIREMENT" "$VISION_GDOWN_REQUIREMENT" "$VISION_SCIPY_REQUIREMENT"
     [[ -f requirements.txt ]] && run_with_log "$VISION_BUILD_LOG" uv pip install --python "$PYTHON" -r requirements.txt
     export BUILD_VERSION="${VISION_BUILD_VERSION}.post${BUILD_NUMBER}"
     export USE_NATIVE_ARCH="$VISION_USE_NATIVE_ARCH" USE_CUDA="$VISION_USE_CUDA" USE_CUDNN="$VISION_USE_CUDNN"
@@ -426,7 +468,7 @@ build_vision() {
     export FORCE_CUDA="$VISION_FORCE_CUDA" BUILD_TEST="$VISION_BUILD_TEST"
     export CMAKE_BUILD_TYPE="$VISION_CMAKE_BUILD_TYPE" CMAKE_POLICY_VERSION_MINIMUM="$VISION_CMAKE_POLICY_VERSION_MINIMUM"
     export TORCHVISION_INCLUDE="$VISION_INCLUDE" TORCHVISION_LIBRARY="$VISION_LIBRARY"
-    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
+    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
   stage_and_install_wheel Torchvision "$wheel_dir" 'torchvision-*.whl' torchvision
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchvision; print('Torchvision:', torchvision.__version__); from torchvision.ops import nms" | tee -a "$MAIN_LOG"
@@ -437,7 +479,7 @@ build_audio() {
   require_source Torchaudio "$AUDIO_SOURCE_DIR"
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir audio)"
-  run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip uninstall -y torchaudio || true
+  run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y torchaudio || true
   clean_source Torchaudio "$AUDIO_SOURCE_DIR"
 
   (
@@ -446,7 +488,7 @@ build_audio() {
     export BUILD_VERSION="${AUDIO_BUILD_VERSION}.post${BUILD_NUMBER}"
     export USE_CUDA="$AUDIO_USE_CUDA" FORCE_CUDA="$AUDIO_FORCE_CUDA" BUILD_TEST="$AUDIO_BUILD_TEST"
     export CMAKE_BUILD_TYPE="$AUDIO_CMAKE_BUILD_TYPE"
-    run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
+    run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
   stage_and_install_wheel Torchaudio "$wheel_dir" 'torchaudio-*.whl' torchaudio
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torchaudio; from torchaudio import _extension; print('Torchaudio:', torchaudio.__version__, 'extension:', _extension._IS_TORCHAUDIO_EXT_AVAILABLE)" | tee -a "$MAIN_LOG"
@@ -466,6 +508,8 @@ verify_all() {
 
 main() {
   require_configuration
+  reject_python_environment_overrides
+  configure_project_local_paths
   preflight
   # This entry point intentionally builds and verifies all five components.
   build_triton
