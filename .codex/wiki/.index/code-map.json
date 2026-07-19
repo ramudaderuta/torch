@@ -29,6 +29,7 @@
     "definition_pages": [],
     "pages": [
       ".codex/wiki/concepts/project-overview.md",
+      ".codex/wiki/debugging/full-cuda-build-failures-2026-07-19.md",
       ".codex/wiki/how-to/build-and-validation.md"
     ],
     "symbols": {}
@@ -49,11 +50,43 @@
     ],
     "symbols": {}
   },
+  "patches/pytorch/cuda-13.1-clang21-compat.patch": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/debugging/full-cuda-build-failures-2026-07-19.md"
+    ],
+    "symbols": {}
+  },
+  "patches/triton/ignore-generated-wheel-metadata.patch": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/debugging/full-cuda-build-failures-2026-07-19.md"
+    ],
+    "symbols": {}
+  },
   "pytorch": {
     "anchors": [],
     "definition_pages": [],
     "pages": [
       ".codex/wiki/concepts/project-overview.md"
+    ],
+    "symbols": {}
+  },
+  "requirements/build.in": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/debugging/full-cuda-build-failures-2026-07-19.md"
+    ],
+    "symbols": {}
+  },
+  "scripts/verify_install.py": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/debugging/full-cuda-build-failures-2026-07-19.md"
     ],
     "symbols": {}
   },

@@ -2,6 +2,7 @@
 # Runtime dependencies that require the locally built torch are resolved only
 # after its wheel exists; see build.sh provenance manifests.
 -r ../pytorch/requirements-build.txt
+nanobind==2.10.2
 pybind11
 setuptools-scm>=8
 wheel

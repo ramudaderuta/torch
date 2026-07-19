@@ -124,6 +124,10 @@ idna==3.18 \
     --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
     # via requests
+nanobind==2.10.2 \
+    --hash=sha256:08509910ce6d1fadeed69cb0880d4d4fcb77739c6af9bd8fb4419391a3ca4c6b \
+    --hash=sha256:6976c1b04b90481d2612b346485a3063818c6faa5077fe9d8bbc9b5fbe29c380
+    # via -r requirements/build.in
 ninja==1.13.0 \
     --hash=sha256:11be2d22027bde06f14c343f01d31446747dbb51e72d00decca2eb99be911e2f \
     --hash=sha256:1c97223cdda0417f414bf864cfb73b72d8777e57ebb279c5f6de368de0062988 \

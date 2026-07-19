@@ -3,12 +3,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly PATCH_DIR="${ROOT_DIR}/patches"
 readonly TRITON_DISTRIBUTION_NAME="pytorch-triton"
 readonly FA4_DISTRIBUTION_NAME="flash-attn-4"
 export TRITON_DISTRIBUTION_NAME FA4_DISTRIBUTION_NAME
 
-# Optional local configuration. Keep this trusted shell-compatible KEY=VALUE file local.
-: "${ENV_FILE:=${ROOT_DIR}/.env}"
+# Required local configuration. Keep this trusted shell-compatible KEY=VALUE file local.
+readonly ENV_FILE="${ROOT_DIR}/.env"
 [[ -f "${ENV_FILE}" ]] || {
   printf 'ERROR: local build configuration is unavailable: %s\n' "${ENV_FILE}" >&2
   exit 1
@@ -25,11 +26,8 @@ FLASH_ATTENTION_BUILD_LOG="${ROOT_DIR}/${FLASH_ATTENTION_BUILD_LOG_FILE:-flash_a
 VISION_BUILD_LOG="${ROOT_DIR}/${VISION_BUILD_LOG_FILE:-vision_build.log}"
 AUDIO_BUILD_LOG="${ROOT_DIR}/${AUDIO_BUILD_LOG_FILE:-audio_build.log}"
 
-for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
-  : >"$log_file"
-done
-
 CURRENT_STAGE="initialization"
+LOGS_INITIALIZED=0
 
 on_error() {
   local exit_code="$1"
@@ -37,17 +35,33 @@ on_error() {
   local command="$3"
   trap - ERR
   write_provenance "failed"
-  printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" | tee -a "$MAIN_LOG" >&2
-  printf 'Logs: main=%s triton=%s pytorch=%s flash-attention=%s vision=%s audio=%s\n' \
-    "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
+  if ((LOGS_INITIALIZED)); then
+    printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" | tee -a "$MAIN_LOG" >&2
+    printf 'Logs: main=%s triton=%s pytorch=%s flash-attention=%s vision=%s audio=%s\n' \
+      "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
+  else
+    printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" >&2
+  fi
   exit "$exit_code"
 }
 
 trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 die() {
-  printf 'ERROR: %s\n' "$*" | tee -a "$MAIN_LOG" >&2
+  if ((LOGS_INITIALIZED)); then
+    printf 'ERROR: %s\n' "$*" | tee -a "$MAIN_LOG" >&2
+  else
+    printf 'ERROR: %s\n' "$*" >&2
+  fi
   exit 1
+}
+
+initialize_logs() {
+  local log_file
+  for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
+    : >"$log_file"
+  done
+  LOGS_INITIALIZED=1
 }
 
 require_configuration() {
@@ -173,6 +187,22 @@ clean_source() {
   fi
 }
 
+apply_submodule_patch() {
+  local name="$1"
+  local source_dir="$2"
+  local patch_file="$3"
+
+  [[ -f "$patch_file" ]] || die "[$name] required patch is unavailable: $patch_file"
+  if git -C "$source_dir" apply --check "$patch_file"; then
+    log "[$name] applying $(basename "$patch_file")"
+    git -C "$source_dir" apply "$patch_file"
+  elif git -C "$source_dir" apply --reverse --check "$patch_file"; then
+    log "[$name] patch is already applied: $(basename "$patch_file")"
+  else
+    die "[$name] patch does not match the checked-out source: $patch_file"
+  fi
+}
+
 prepare_wheel_dir() {
   local component="$1"
   local wheel_dir="${ROOT_DIR}/.build/wheels/${component}"
@@ -250,6 +280,9 @@ write_provenance() {
     printf 'torch_cuda_arch_list=%s\n' "${TORCH_CUDA_ARCH_LIST:-unavailable}"
     if [[ -d "$DIST_DIR" ]]; then
       find "$DIST_DIR" -maxdepth 1 -type f -name '*.whl' -print0 | sort -z | xargs -0r sha256sum
+    fi
+    if [[ -d "$PATCH_DIR" ]]; then
+      find "$PATCH_DIR" -type f -name '*.patch' -print0 | sort -z | xargs -0r sha256sum | sed 's|  |  patch=|'
     fi
   } >"${manifest_dir}/build-provenance.txt"
 }
@@ -383,6 +416,7 @@ build_triton() {
   wheel_dir="$(prepare_wheel_dir triton)"
   run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y triton pytorch-triton || true
   clean_source Triton "$TRITON_SOURCE_DIR"
+  apply_submodule_patch Triton "$TRITON_SOURCE_DIR" "$PATCH_DIR/triton/ignore-generated-wheel-metadata.patch"
 
   (
     cd "$TRITON_SOURCE_DIR"
@@ -390,6 +424,7 @@ build_triton() {
     export TRITON_LIBDEVICE_PATH TRITON_LIBCUDA_PATH TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH
     export TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX TRITON_BUILD_WITH_CCACHE TRITON_PARALLEL_LINK_JOBS
     export TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
+    export TRITON_APPEND_CMAKE_ARGS="-DTRITON_BUILD_UT=${TRITON_BUILD_UT}"
     run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
   stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl' "$TRITON_DISTRIBUTION_NAME"
@@ -403,6 +438,7 @@ build_pytorch() {
   wheel_dir="$(prepare_wheel_dir pytorch)"
   run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y torch || true
   clean_source PyTorch "$PYTORCH_SOURCE_DIR"
+  apply_submodule_patch PyTorch "$PYTORCH_SOURCE_DIR" "$PATCH_DIR/pytorch/cuda-13.1-clang21-compat.patch"
 
   (
     cd "$PYTORCH_SOURCE_DIR"
@@ -436,6 +472,7 @@ build_flash_attention() {
 
   run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y flash-attn flash-attn-4 || true
   run_with_log "$FLASH_ATTENTION_BUILD_LOG" uv pip install --python "$PYTHON" \
+    --prerelease=allow \
     --constraint "$constraints_file" \
     "$FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT" "$FLASH_ATTENTION_EINOPS_REQUIREMENT" "$FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT" \
     "$FLASH_ATTENTION_TVM_FFI_REQUIREMENT" "$FLASH_ATTENTION_TORCH_C_DLPACK_REQUIREMENT" "$FLASH_ATTENTION_QUACK_KERNELS_REQUIREMENT"
@@ -510,6 +547,7 @@ main() {
   require_configuration
   reject_python_environment_overrides
   configure_project_local_paths
+  initialize_logs
   preflight
   # This entry point intentionally builds and verifies all five components.
   build_triton

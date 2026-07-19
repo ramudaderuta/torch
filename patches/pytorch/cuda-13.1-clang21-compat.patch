@@ -1,0 +1,37 @@
+diff --git a/aten/src/ATen/native/sparse/cuda/SparseCsrTensorMath.cu b/aten/src/ATen/native/sparse/cuda/SparseCsrTensorMath.cu
+index 5331db692..88fa19970 100644
+--- a/aten/src/ATen/native/sparse/cuda/SparseCsrTensorMath.cu
++++ b/aten/src/ATen/native/sparse/cuda/SparseCsrTensorMath.cu
+@@ -754,10 +754,10 @@ void _apply_sparse_csr_linear_solve(
+     scalar_t* values_ptr = values.data_ptr<scalar_t>();
+     scalar_t* b_ptr = b.data_ptr<scalar_t>();
+     scalar_t* x_ptr = x.data_ptr<scalar_t>();
+-    auto CUDA_R_TYP = std::is_same_v<scalar_t, double> ? CUDA_R_64F : CUDA_R_32F;
+-    TORCH_CUDSS_CHECK(cudssMatrixCreateDn(&b_mt, b.size(0), 1, b.size(0), b_ptr, CUDA_R_TYP, CUDSS_LAYOUT_COL_MAJOR));
+-    TORCH_CUDSS_CHECK(cudssMatrixCreateDn(&x_mt, x.size(0), 1, x.size(0), x_ptr, CUDA_R_TYP, CUDSS_LAYOUT_COL_MAJOR));
+-    TORCH_CUDSS_CHECK(cudssMatrixCreateCsr(&A_mt, A.size(0), A.size(1),  A._nnz(), rowOffsets, rowOffsets + crow.size(0), colIndices, values_ptr, CUDA_R_32I, CUDA_R_TYP, CUDSS_MTYPE_GENERAL, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
++    auto CUDSS_R_TYP = std::is_same_v<scalar_t, double> ? CUDSS_R_64F : CUDSS_R_32F;
++    TORCH_CUDSS_CHECK(cudssMatrixCreateDn(&b_mt, b.size(0), 1, b.size(0), b_ptr, CUDSS_R_TYP, CUDSS_LAYOUT_COL_MAJOR));
++    TORCH_CUDSS_CHECK(cudssMatrixCreateDn(&x_mt, x.size(0), 1, x.size(0), x_ptr, CUDSS_R_TYP, CUDSS_LAYOUT_COL_MAJOR));
++    TORCH_CUDSS_CHECK(cudssMatrixCreateCsr(&A_mt, A.size(0), A.size(1),  A._nnz(), rowOffsets, rowOffsets + crow.size(0), colIndices, values_ptr, CUDSS_R_32I, CUDSS_R_32I, CUDSS_R_TYP, CUDSS_MTYPE_GENERAL, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO));
+   }));
+   TORCH_CUDSS_CHECK(cudssExecute(handle, CUDSS_PHASE_ANALYSIS, config, cudss_data, A_mt, x_mt, b_mt));
+   TORCH_CUDSS_CHECK(cudssExecute(handle, CUDSS_PHASE_FACTORIZATION, config, cudss_data, A_mt, x_mt, b_mt));
+diff --git a/cmake/Dependencies.cmake b/cmake/Dependencies.cmake
+index e1c671846..43b5c4818 100644
+--- a/cmake/Dependencies.cmake
++++ b/cmake/Dependencies.cmake
+@@ -1207,9 +1207,12 @@ if(USE_DISTRIBUTED AND USE_TENSORPIPE)
+     # Tensorpipe uses cuda_add_library
+     torch_update_find_cuda_flags()
+     add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/tensorpipe)
+-    # Suppress warning to unblock libnop compilation by clang-17
++    # Suppress warning to unblock libnop compilation by Clang.
+     # See https://github.com/pytorch/pytorch/issues/151316
+     target_compile_options_if_supported(tensorpipe -Wno-missing-template-arg-list-after-template-kw)
++    if(TARGET tensorpipe_cuda)
++      target_compile_options_if_supported(tensorpipe_cuda -Wno-missing-template-arg-list-after-template-kw)
++    endif()
+     # Workaround for relocation truncated to fit: R_AARCH64_CALL26 against symbol __aarch64_swp4_relax'
+     # When compiling for ARMv8.0, build uv with embedded atomics, which are slightly slower
+     # But are used only once during shutdown

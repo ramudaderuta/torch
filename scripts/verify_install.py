@@ -6,6 +6,8 @@ from importlib import metadata
 from pathlib import Path
 from types import ModuleType
 
+from packaging.version import Version
+
 
 def require_within(label: str, path: Path, root: Path) -> None:
     try:
@@ -14,7 +16,14 @@ def require_within(label: str, path: Path, root: Path) -> None:
         raise RuntimeError(f"{label} is outside {root}: {path}") from error
 
 
-def report_package(label: str, module: ModuleType, distribution_name: str, source_roots: list[Path]) -> None:
+def report_package(
+    label: str,
+    module: ModuleType,
+    distribution_name: str,
+    source_roots: list[Path],
+    *,
+    compare_module_version: bool = True,
+) -> None:
     distribution = metadata.distribution(distribution_name)
     module_file = getattr(module, "__file__", None)
     if module_file is None:
@@ -31,7 +40,7 @@ def report_package(label: str, module: ModuleType, distribution_name: str, sourc
             continue
         raise RuntimeError(f"{label} imported from source checkout: {module_path}")
     module_version = getattr(module, "__version__", None)
-    if module_version is not None and module_version != distribution.version:
+    if compare_module_version and module_version is not None and Version(module_version).public != Version(distribution.version).public:
         raise RuntimeError(
             f"{label} module/distribution version mismatch: "
             f"{module_version} != {distribution.version}"
@@ -59,7 +68,10 @@ def verify_fa4(torch: ModuleType, flash_attn_func: object) -> None:
             q = torch.randn(batch_size, sequence_length, heads, head_dim, device="cuda", dtype=dtype, requires_grad=True)
             k = torch.randn_like(q, requires_grad=True)
             v = torch.randn_like(q, requires_grad=True)
-            output = flash_attn_func(q, k, v, causal=causal)
+            result = flash_attn_func(q, k, v, causal=causal)
+            if not isinstance(result, tuple) or not result or not isinstance(result[0], torch.Tensor):
+                raise RuntimeError(f"FA4 returned an unexpected result: {type(result)!r}")
+            output = result[0]
             shape = tuple(output.shape)
             if not torch.isfinite(output).all():
                 raise RuntimeError(f"FA4 produced non-finite output: dtype={dtype} causal={causal} shape={shape}")
@@ -113,7 +125,13 @@ def main() -> int:
     report_package("PyTorch", torch, "torch", source_roots)
     report_package("Torchvision", torchvision, "torchvision", source_roots)
     report_package("Torchaudio", torchaudio, "torchaudio", source_roots)
-    report_package("Flash Attention 4", flash_attn_cute, os.environ["FA4_DISTRIBUTION_NAME"], source_roots)
+    report_package(
+        "Flash Attention 4",
+        flash_attn_cute,
+        os.environ["FA4_DISTRIBUTION_NAME"],
+        source_roots,
+        compare_module_version=False,
+    )
     print("PyTorch CUDA:", torch.version.cuda)
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA not enabled")

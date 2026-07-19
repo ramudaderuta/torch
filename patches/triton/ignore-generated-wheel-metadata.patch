@@ -1,0 +1,10 @@
+diff --git a/.gitignore b/.gitignore
+index 579b2223..b0e41066 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,4 +10,5 @@ llvm-project-*/
+ python/build/
+ python/dist/
+ python/triton*.egg-info/
++python/pytorch_triton.egg-info/
+ python/triton_kernels/triton*.egg-info/
