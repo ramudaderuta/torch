@@ -25,7 +25,7 @@ Notes:
   - 会更新当前分支对应的远端分支（REMOTE/<branch>）
   - 工作区有未提交改动会退出
   - detached HEAD 不支持（请先切回分支）
-  - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton/xformers（存在则更新，不存在则提示）
+  - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton/xformers/sageattention（存在则更新，不存在则提示）
 EOF
 }
 
@@ -37,6 +37,7 @@ EXTRA_REPOS=(
   "flash-attention|https://github.com/Dao-AILab/flash-attention.git"
   "triton|https://github.com/openai/triton.git"
   "xformers|https://github.com/facebookresearch/xformers.git"
+  "sageattention|https://github.com/thu-ml/SageAttention.git"
 )
 while [[ $# -gt 0 ]]; do
   case "$1" in

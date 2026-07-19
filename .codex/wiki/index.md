@@ -3,8 +3,9 @@ title: Project Wiki Index
 type: wiki-index
 status: current
 generated_by: /home/build/.codex/skills/wiki-note/scripts/wiki_note.py
-updated: 2026-07-19T11:19:56Z
+updated: 2026-07-19T13:15:25Z
 ---
+
 
 
 
@@ -42,7 +43,7 @@ updated: 2026-07-19T11:19:56Z
 # Project Wiki Index
 
 <!-- BEGIN AUTO -->
-- Last rebuilt: 2026-07-19T11:19:56Z
+- Last rebuilt: 2026-07-19T13:15:25Z
 - Page count: 4
 
 ## By Type
@@ -85,7 +86,7 @@ updated: 2026-07-19T11:19:56Z
 - [项目概览与架构边界](concepts/project-overview.md) | files: `.gitmodules`, `build.sh`, `update.sh` ... | anchors: 0 | status: current
 - [2026-07-19 Full CUDA Build Failures and Remedies](debugging/full-cuda-build-failures-2026-07-19.md) | files: `build.sh`, `patches/pytorch/cuda-13-clang21-compat.patch`, `patches/pytorch/cudss-0.8-api-compat.patch` ... | anchors: 0 | status: current
 - [Source Build and Validation](how-to/build-and-validation.md) | files: `build.sh`, `.gitignore`, `.env.example` ... | anchors: 0 | status: current
-- [上游同步与子模块更新](how-to/upstream-update.md) | files: `update.sh`, `.gitmodules`, `xformers/.gitmodules` | anchors: 0 | status: current
+- [上游同步与子模块更新](how-to/upstream-update.md) | files: `update.sh`, `.gitmodules`, `sageattention/sageattention3_blackwell/setup.py` ... | anchors: 0 | status: current
 
 Use `scripts/wiki.py nav goto` and `scripts/wiki.py nav refs` for symbol-level navigation.
 <!-- END AUTO -->

@@ -108,6 +108,15 @@
     ],
     "symbols": {}
   },
+  "sageattention/sageattention3_blackwell/setup.py": {
+    "anchors": [],
+    "definition_pages": [],
+    "pages": [
+      ".codex/wiki/how-to/build-and-validation.md",
+      ".codex/wiki/how-to/upstream-update.md"
+    ],
+    "symbols": {}
+  },
   "scripts/verify_install.py": {
     "anchors": [],
     "definition_pages": [],

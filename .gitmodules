@@ -16,3 +16,6 @@
 [submodule "xformers"]
 	path = xformers
 	url = https://github.com/facebookresearch/xformers.git
+[submodule "sageattention"]
+	path = sageattention
+	url = https://github.com/thu-ml/SageAttention.git
