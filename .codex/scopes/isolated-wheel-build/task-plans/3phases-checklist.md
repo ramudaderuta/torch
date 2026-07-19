@@ -18,7 +18,7 @@ description: Execution and verification checklist for isolated-wheel-build 3-pha
 | Phase | Status | Completion | Health | Blockers |
 |---|---|---|---|---|
 | Phase 1 | Complete | 100% | Healthy | 0 |
-| Phase 2 | In progress | 90% | Healthy | Runtime provenance manifest remains to be written after a full build |
+| Phase 2 | In progress | 90% | Healthy | Resolver-lock work and runtime validation remain intentionally unexecuted |
 | Phase 3 | Complete | 100% | Healthy | 0 |
 
 ## Phase Entry Links
@@ -38,10 +38,10 @@ description: Execution and verification checklist for isolated-wheel-build 3-pha
 
 ### Phase 2
 - Batch date: 2026-07-18
-- Completed tasks: T021 and T023.
-- Evidence commands: `bash -n build.sh`; embedded Python compilation; targeted inspection of isolated wheel staging, output paths, and removed module-form uv invocation.
-- Issues/blockers: Full wheel/runtime provenance needs a requested CUDA build.
-- Resolutions: Deferred without inventing package metadata.
+- Completed tasks: T021 and T023; T022 provenance subtask implemented.
+- Evidence commands: `bash -n build.sh`; embedded Python compilation; targeted inspection of isolated wheel staging, output paths, forced reinstall, provenance ordering, and exact architecture validation.
+- Issues/blockers: Resolver-lock work and CUDA runtime validation are intentionally not run for this change.
+- Resolutions: Provenance is now emitted before validation and on `ERR`; resolver-lock completion plus source/runtime behavior remain to be evidenced by future requested work.
 - Checkpoint confirmed: Static checkpoint only.
 
 ### Phase 3

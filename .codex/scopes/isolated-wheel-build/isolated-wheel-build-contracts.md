@@ -28,8 +28,11 @@ metadata diagnostics are non-fatal only when explicitly marked as such.
 ## Validation and Compatibility Rules
 
 Each selected wheel must match exactly one expected package pattern in `dist/`.
-FA4's dependencies constrain Torch to the local wheel version. CUDA validation
-compares the active device capability with `torch.cuda.get_arch_list()`.
+It is force-reinstalled into the project venv so same-version wheels cannot be
+silently reused. Final validation confirms the module and distribution versions
+and paths resolve within that venv. FA4's dependencies constrain Torch to the
+local wheel version. CUDA validation requires an exact native
+`sm_<major><minor>` entry for the active device in `torch.cuda.get_arch_list()`.
 
 ## Requirement Boundary Notes
 

@@ -35,11 +35,12 @@ Tasks:
 - [x] T021 [Infra] Refactor interpreter and artifact lifecycle
   - DoD: `build.sh` creates/uses `.venv`, writes each component wheel to `dist`, and installs only the selected wheel into `.venv` when downstream builds require it.
 - [ ] T022 [Config] Apply lock and provenance boundaries
+  - Progress: Manifests now record resolved packages, recursive submodule commits, tool/build metadata, and wheel checksums without credentials, including on a post-preflight failure. The remaining resolver-lock requirement is unchanged.
   - DoD: Every resolver install consumes `requirements/build.lock`; manifests record resolved packages and recursive submodule commits without credentials.
 - [x] T023 [QA] Layer build verification and error reporting
   - DoD: Torchaudio no longer calls removed backend APIs, FA4 diagnostics are layered, CUDA architecture and Torchvision CUDA NMS checks are explicit, and `ERR` output identifies the failed stage.
 
-Checkpoint: Shell syntax and targeted static checks pass without a CUDA build.
+Checkpoint: Shell syntax and targeted static checks pass without a CUDA build; runtime validation remains intentionally unexecuted.
 
 ## Dependencies & Execution Order
 - Phase 1 blocks all others.

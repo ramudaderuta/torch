@@ -33,6 +33,7 @@ on_error() {
   local line_number="$2"
   local command="$3"
   trap - ERR
+  write_provenance "failed"
   printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" | tee -a "$MAIN_LOG" >&2
   printf 'Logs: main=%s triton=%s pytorch=%s flash-attention=%s vision=%s audio=%s\n' \
     "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
@@ -129,7 +130,8 @@ stage_and_install_wheel() {
   compgen -G "$wheel_dir/$wheel_pattern" >/dev/null || die "[$package_name] no wheel produced in $wheel_dir"
   ((${#wheels[@]} == 1)) || die "[$package_name] ambiguous wheel selection in $wheel_dir: $wheel_pattern"
   cp -f -- "${wheels[0]}" "$DIST_DIR/"
-  run_with_log "$MAIN_LOG" "$PYTHON" -m pip install --no-deps "${wheels[0]}"
+  # Reinstall even at an unchanged version so validation cannot reuse an older wheel.
+  run_with_log "$MAIN_LOG" "$PYTHON" -m pip install --force-reinstall --no-deps "${wheels[0]}"
 }
 
 ensure_project_venv() {
@@ -156,8 +158,38 @@ PY
 }
 
 write_provenance() {
-  "$PYTHON" -m pip freeze >"${ROOT_DIR}/.build/manifests/pip-freeze.txt"
-  git submodule status --recursive >"${ROOT_DIR}/.build/manifests/submodules.txt"
+  local status="${1:-built}"
+  local manifest_dir="${ROOT_DIR}/.build/manifests"
+
+  mkdir -p "$manifest_dir" || return 0
+  if [[ -n "${PYTHON:-}" && -x "$PYTHON" ]]; then
+    "$PYTHON" -m pip freeze >"${manifest_dir}/pip-freeze.txt" || true
+  else
+    printf 'Python unavailable while recording provenance\n' >"${manifest_dir}/pip-freeze.txt"
+  fi
+  git -C "$ROOT_DIR" submodule status --recursive >"${manifest_dir}/submodules.txt" 2>/dev/null || true
+
+  {
+    printf 'status=%s\n' "$status"
+    printf 'stage=%s\n' "$CURRENT_STAGE"
+    printf 'timestamp_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'build_number=%s\n' "${BUILD_NUMBER:-unavailable}"
+    printf 'pytorch_build_version=%s\n' "${PYTORCH_BUILD_VERSION:-unavailable}"
+    printf 'vision_build_version=%s\n' "${VISION_BUILD_VERSION:-unavailable}"
+    printf 'audio_build_version=%s\n' "${AUDIO_BUILD_VERSION:-unavailable}"
+    git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null | sed 's/^/root_commit=/' || true
+    if [[ -n "${PYTHON:-}" && -x "$PYTHON" ]]; then
+      "$PYTHON" --version 2>&1 | sed 's/^/python=/' || true
+      "$PYTHON" -m pip --version 2>&1 | sed 's/^/pip=/' || true
+    fi
+    nvcc --version 2>/dev/null | grep 'release' | sed 's/^/nvcc=/' || true
+    printf 'cc=%s\n' "${CC:-unavailable}"
+    printf 'cxx=%s\n' "${CXX:-unavailable}"
+    printf 'torch_cuda_arch_list=%s\n' "${TORCH_CUDA_ARCH_LIST:-unavailable}"
+    if [[ -d "$DIST_DIR" ]]; then
+      find "$DIST_DIR" -maxdepth 1 -type f -name '*.whl' -print0 | sort -z | xargs -0r sha256sum
+    fi
+  } >"${manifest_dir}/build-provenance.txt"
 }
 
 configure_paths() {
@@ -400,28 +432,80 @@ verify_all() {
   section "Final verification"
   "$PYTHON" - <<'PY'
 import sys
+from importlib import metadata
+from pathlib import Path
 import torch
 import torchaudio
 import torchvision
 import triton
+import flash_attn.cute as flash_attn_cute
 from flash_attn.cute import flash_attn_func
 
+
+def report_package(label, module, distribution_name):
+    distribution = metadata.distribution(distribution_name)
+    module_path = Path(module.__file__).resolve()
+    environment_root = Path(sys.prefix).resolve()
+    assert module_path.is_relative_to(environment_root), (
+        f"{label} imported outside the configured venv: {module_path} "
+        f"(venv: {environment_root})"
+    )
+    module_version = getattr(module, "__version__", None)
+    if module_version is not None:
+        assert module_version == distribution.version, (
+            f"{label} module/distribution version mismatch: "
+            f"{module_version} != {distribution.version}"
+        )
+    print(
+        f"{label}: version={distribution.version} distribution="
+        f"{distribution.metadata['Name']} module={module_path} "
+        f"distribution_root={distribution.locate_file('')}"
+    )
+
 print("Python:", sys.version)
-print("Triton:", triton.__version__)
-print("PyTorch:", torch.__version__, "CUDA:", torch.version.cuda)
-print("Torchvision:", torchvision.__version__)
-print("Torchaudio:", torchaudio.__version__)
+report_package("Triton", triton, "pytorch-triton")
+report_package("PyTorch", torch, "torch")
+report_package("Torchvision", torchvision, "torchvision")
+report_package("Torchaudio", torchaudio, "torchaudio")
+report_package("Flash Attention 4", flash_attn_cute, "flash-attn-4")
+print("PyTorch CUDA:", torch.version.cuda)
 assert torch.cuda.is_available(), "CUDA not enabled"
 assert torch.backends.cudnn.is_available(), "cuDNN extension not compiled"
 assert torchvision._HAS_OPS, "Torchvision extension not compiled"
-capability = ".".join(map(str, torch.cuda.get_device_capability()))
-assert any(capability.replace(".", "") in arch for arch in torch.cuda.get_arch_list()), (capability, torch.cuda.get_arch_list())
+major, minor = torch.cuda.get_device_capability()
+expected_arch = f"sm_{major}{minor}"
+compiled_arches = torch.cuda.get_arch_list()
+assert expected_arch in compiled_arches, (
+    f"Current GPU requires native {expected_arch}, but PyTorch contains: "
+    f"{compiled_arches}"
+)
 x = torch.randn(10, 10, device="cuda")
 print("CUDA matrix multiplication norm:", (x @ x).norm().item())
 boxes = torch.tensor([[0, 0, 10, 10], [1, 1, 11, 11]], device="cuda", dtype=torch.float32)
 print("Torchvision CUDA NMS:", torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device="cuda"), 0.5).tolist())
-q = torch.randn(1, 128, 8, 64, device="cuda", dtype=torch.float16)
-print("Flash Attention 4 output shape:", tuple(flash_attn_func(q, q, q, causal=True).shape))
+for dtype in (torch.float16, torch.bfloat16):
+    for causal in (False, True):
+        q = torch.randn(1, 32, 8, 64, device="cuda", dtype=dtype, requires_grad=True)
+        k = torch.randn_like(q, requires_grad=True)
+        v = torch.randn_like(q, requires_grad=True)
+        output = flash_attn_func(q, k, v, causal=causal)
+        assert torch.isfinite(output).all(), f"FA4 produced non-finite {dtype} output"
+        reference = torch.nn.functional.scaled_dot_product_attention(
+            q.detach().transpose(1, 2),
+            k.detach().transpose(1, 2),
+            v.detach().transpose(1, 2),
+            is_causal=causal,
+        ).transpose(1, 2)
+        torch.testing.assert_close(output.detach(), reference, rtol=2e-2, atol=2e-2)
+        output.square().mean().backward()
+        assert all(
+            gradient is not None and torch.isfinite(gradient).all()
+            for gradient in (q.grad, k.grad, v.grad)
+        ), f"FA4 backward failed for {dtype}, causal={causal}"
+        print(
+            "Flash Attention 4:",
+            f"dtype={dtype} causal={causal} shape={tuple(output.shape)} backward=ok",
+        )
 print("All components verified successfully")
 PY
 }
@@ -434,8 +518,9 @@ main() {
   build_flash_attention
   build_vision
   build_audio
+  write_provenance "built"
   verify_all
-  write_provenance
+  write_provenance "verified"
   section "Build complete"
   log "Main log: $MAIN_LOG"
   log "Triton log: $TRITON_BUILD_LOG"
