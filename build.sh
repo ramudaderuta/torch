@@ -15,12 +15,12 @@ set -a
 source "${ENV_FILE}"
 set +a
 
-MAIN_LOG="${ROOT_DIR}/alltorch_build.log"
-TRITON_BUILD_LOG="${ROOT_DIR}/triton_build.log"
-PYTORCH_BUILD_LOG="${ROOT_DIR}/pytorch_build.log"
-FLASH_ATTENTION_BUILD_LOG="${ROOT_DIR}/flash_attention_build.log"
-VISION_BUILD_LOG="${ROOT_DIR}/vision_build.log"
-AUDIO_BUILD_LOG="${ROOT_DIR}/audio_build.log"
+MAIN_LOG="${ROOT_DIR}/${MAIN_LOG_FILE:-alltorch_build.log}"
+TRITON_BUILD_LOG="${ROOT_DIR}/${TRITON_BUILD_LOG_FILE:-triton_build.log}"
+PYTORCH_BUILD_LOG="${ROOT_DIR}/${PYTORCH_BUILD_LOG_FILE:-pytorch_build.log}"
+FLASH_ATTENTION_BUILD_LOG="${ROOT_DIR}/${FLASH_ATTENTION_BUILD_LOG_FILE:-flash_attention_build.log}"
+VISION_BUILD_LOG="${ROOT_DIR}/${VISION_BUILD_LOG_FILE:-vision_build.log}"
+AUDIO_BUILD_LOG="${ROOT_DIR}/${AUDIO_BUILD_LOG_FILE:-audio_build.log}"
 
 for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
   : >"$log_file"
@@ -50,12 +50,27 @@ die() {
 require_configuration() {
   local variable
   local -a required_variables=(
-    BUILD_NUMBER VENV_DIR PYTHON PYTHON_VERSION BUILD_CONSTRAINTS_FILE DIST_DIR MAX_JOBS USE_CLANG CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
+    BUILD_NUMBER VENV_DIR PYTHON PYTHON_VERSION BUILD_CONSTRAINTS_FILE DIST_DIR MAX_JOBS USE_CLANG USE_CCACHE CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
     INSTALL_BUILD_PYTHON_DEPS PYTORCH_SOURCE_DIR VISION_SOURCE_DIR AUDIO_SOURCE_DIR
     TRITON_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
     CUDA_HOME MAGMA_ROOT OPENMPI_ROOT NVCODEC_HOME
     LLVM_CONFIG_PATH LLVM_SYSPATH PYTORCH_BUILD_VERSION VISION_BUILD_VERSION
     AUDIO_BUILD_VERSION
+    MAIN_LOG_FILE TRITON_BUILD_LOG_FILE PYTORCH_BUILD_LOG_FILE FLASH_ATTENTION_BUILD_LOG_FILE VISION_BUILD_LOG_FILE AUDIO_BUILD_LOG_FILE
+    BUILD_PKG_CONFIG_PREFIX GCC_COMMAND GXX_COMMAND CLANG_COMMAND CLANGXX_COMMAND CMAKE_COMMAND NINJA_COMMAND NVCC_COMMAND NVIDIA_SMI_COMMAND CCACHE_COMMAND
+    TRITON_HOME TRITON_CACHE_DIR TRITON_CUPTI_INCLUDE_PATH TRITON_CUPTI_LIB_PATH TRITON_LIBDEVICE_PATH TRITON_LIBCUDA_PATH
+    TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX
+    TRITON_BUILD_WITH_CCACHE TRITON_PARALLEL_LINK_JOBS TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
+    PYTORCH_USE_NATIVE_ARCH PYTORCH_USE_CUDA PYTORCH_USE_CUDNN PYTORCH_USE_NCCL PYTORCH_USE_CUSPARSELT PYTORCH_USE_CUDSS
+    PYTORCH_USE_CUFILE PYTORCH_USE_MKLDNN PYTORCH_USE_OPENMP PYTORCH_USE_FLASH_ATTENTION PYTORCH_USE_MEM_EFF_ATTENTION
+    PYTORCH_USE_DISTRIBUTED PYTORCH_USE_XPU PYTORCH_USE_ROCM PYTORCH_FORCE_CUDA PYTORCH_BUILD_TEST PYTORCH_CMAKE_BUILD_TYPE PYTORCH_CMAKE_POLICY_VERSION_MINIMUM
+    FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT FLASH_ATTENTION_EINOPS_REQUIREMENT FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT
+    FLASH_ATTENTION_TVM_FFI_REQUIREMENT FLASH_ATTENTION_TORCH_C_DLPACK_REQUIREMENT FLASH_ATTENTION_QUACK_KERNELS_REQUIREMENT
+    VISION_PILLOW_REQUIREMENT VISION_GDOWN_REQUIREMENT VISION_SCIPY_REQUIREMENT VISION_USE_NATIVE_ARCH VISION_USE_CUDA VISION_USE_CUDNN VISION_USE_XPU VISION_USE_ROCM
+    VISION_USE_GPU_VIDEO_DECODER VISION_USE_CPU_VIDEO_DECODER VISION_USE_PNG VISION_USE_JPEG VISION_USE_WEBP VISION_USE_NVJPEG
+    VISION_FORCE_CUDA VISION_BUILD_TEST VISION_CMAKE_BUILD_TYPE VISION_CMAKE_POLICY_VERSION_MINIMUM VISION_INCLUDE VISION_LIBRARY
+    AUDIO_USE_CUDA AUDIO_FORCE_CUDA AUDIO_BUILD_TEST AUDIO_CMAKE_BUILD_TYPE
+    VERIFY_FA4_DTYPES VERIFY_FA4_BATCH_SIZE VERIFY_FA4_SEQUENCE_LENGTH VERIFY_FA4_HEADS VERIFY_FA4_HEAD_DIM VERIFY_FA4_RTOL VERIFY_FA4_ATOL
   )
 
   for variable in "${required_variables[@]}"; do
@@ -182,7 +197,7 @@ write_provenance() {
       "$PYTHON" --version 2>&1 | sed 's/^/python=/' || true
       "$PYTHON" -m pip --version 2>&1 | sed 's/^/pip=/' || true
     fi
-    nvcc --version 2>/dev/null | grep 'release' | sed 's/^/nvcc=/' || true
+    "$NVCC_COMMAND" --version 2>/dev/null | grep 'release' | sed 's/^/nvcc=/' || true
     printf 'cc=%s\n' "${CC:-unavailable}"
     printf 'cxx=%s\n' "${CXX:-unavailable}"
     printf 'torch_cuda_arch_list=%s\n' "${TORCH_CUDA_ARCH_LIST:-unavailable}"
@@ -193,39 +208,45 @@ write_provenance() {
 }
 
 configure_paths() {
-  export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+  export PKG_CONFIG_PATH="${BUILD_PKG_CONFIG_PREFIX}:${PKG_CONFIG_PATH:-}"
   export PATH="${CUDA_HOME}/bin:${OPENMPI_ROOT}/bin:${PATH}"
   export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${MAGMA_ROOT}/lib:${OPENMPI_ROOT}/lib:${NVCODEC_HOME}/lib:${LD_LIBRARY_PATH:-}"
 }
 
 configure_compiler() {
   if [[ "$USE_CLANG" == "1" ]]; then
-    require_cmd clang-21
-    require_cmd clang++-21
-    export CC=clang-21 CXX=clang++-21
-    log "Using clang-21"
+    require_cmd "$CLANG_COMMAND"
+    require_cmd "$CLANGXX_COMMAND"
+    export CC="$CLANG_COMMAND" CXX="$CLANGXX_COMMAND"
+    log "Using $CLANG_COMMAND"
   else
-    export CC=gcc CXX=g++
-    log "Using GCC"
+    require_cmd "$GCC_COMMAND"
+    require_cmd "$GXX_COMMAND"
+    export CC="$GCC_COMMAND" CXX="$GXX_COMMAND"
+    log "Using $GCC_COMMAND"
   fi
 }
 
 configure_ccache() {
-  if ! command -v ccache >/dev/null 2>&1; then
+  [[ "$USE_CCACHE" == "1" ]] || {
+    log "ccache disabled (USE_CCACHE=$USE_CCACHE)"
+    return
+  }
+  if ! command -v "$CCACHE_COMMAND" >/dev/null 2>&1; then
     log "ccache not found; continuing without compiler cache"
     return
   fi
 
-  export CMAKE_C_COMPILER_LAUNCHER=ccache
-  export CMAKE_CXX_COMPILER_LAUNCHER=ccache
-  export CMAKE_CUDA_COMPILER_LAUNCHER=ccache
-  ccache -z
+  export CMAKE_C_COMPILER_LAUNCHER="$CCACHE_COMMAND"
+  export CMAKE_CXX_COMPILER_LAUNCHER="$CCACHE_COMMAND"
+  export CMAKE_CUDA_COMPILER_LAUNCHER="$CCACHE_COMMAND"
+  "$CCACHE_COMMAND" -z
   log "Enabled ccache"
 }
 
 configure_cuda_architectures() {
   local -a compute_caps=()
-  mapfile -t compute_caps < <(nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits | sort -u)
+  mapfile -t compute_caps < <("$NVIDIA_SMI_COMMAND" --query-gpu=compute_cap --format=csv,noheader,nounits | sort -u)
   ((${#compute_caps[@]} > 0)) || die "No CUDA GPU compute capability detected"
 
   export TORCH_CUDA_ARCH_LIST
@@ -266,12 +287,12 @@ check_system_dependencies() {
 print_environment() {
   section "Build environment"
   "$PYTHON" --version | tee -a "$MAIN_LOG"
-  gcc -dumpfullversion -dumpversion | sed 's/^/GCC: /' | tee -a "$MAIN_LOG"
-  clang-21 --version | head -n1 | sed 's/^/Clang: /' | tee -a "$MAIN_LOG"
-  cmake --version | head -n1 | sed 's/^/CMake: /' | tee -a "$MAIN_LOG"
-  ninja --version | sed 's/^/Ninja: /' | tee -a "$MAIN_LOG"
-  nvcc --version | grep 'release' | sed 's/^/nvcc: /' | tee -a "$MAIN_LOG"
-  nvidia-smi --query-gpu=driver_version,name --format=csv,noheader | sed 's/^/GPU: /' | tee -a "$MAIN_LOG"
+  "$GCC_COMMAND" -dumpfullversion -dumpversion | sed 's/^/GCC: /' | tee -a "$MAIN_LOG"
+  "$CLANG_COMMAND" --version | head -n1 | sed 's/^/Clang: /' | tee -a "$MAIN_LOG"
+  "$CMAKE_COMMAND" --version | head -n1 | sed 's/^/CMake: /' | tee -a "$MAIN_LOG"
+  "$NINJA_COMMAND" --version | sed 's/^/Ninja: /' | tee -a "$MAIN_LOG"
+  "$NVCC_COMMAND" --version | grep 'release' | sed 's/^/nvcc: /' | tee -a "$MAIN_LOG"
+  "$NVIDIA_SMI_COMMAND" --query-gpu=driver_version,name --format=csv,noheader | sed 's/^/GPU: /' | tee -a "$MAIN_LOG"
   git --version | tee -a "$MAIN_LOG"
 }
 
@@ -281,11 +302,12 @@ preflight() {
   [[ -f "$BUILD_CONSTRAINTS_FILE" ]] || die "Build constraints are unavailable: $BUILD_CONSTRAINTS_FILE"
   mkdir -p "$DIST_DIR" "${ROOT_DIR}/.build/manifests"
   require_cmd git
-  require_cmd cmake
-  require_cmd ninja
-  require_cmd gcc
-  require_cmd nvcc
-  require_cmd nvidia-smi
+  require_cmd "$CMAKE_COMMAND"
+  require_cmd "$NINJA_COMMAND"
+  require_cmd "$GCC_COMMAND"
+  require_cmd "$GXX_COMMAND"
+  require_cmd "$NVCC_COMMAND"
+  require_cmd "$NVIDIA_SMI_COMMAND"
   [[ -x "$LLVM_CONFIG_PATH" ]] || die "llvm-config is unavailable: $LLVM_CONFIG_PATH"
   [[ -f /usr/include/cudnn_version.h || -f /usr/include/x86_64-linux-gnu/cudnn_version.h ]] || die "cuDNN headers are unavailable"
 
@@ -316,19 +338,10 @@ build_triton() {
 
   (
     cd "$TRITON_SOURCE_DIR"
-    export TRITON_HOME="$HOME"
-    export TRITON_CACHE_DIR="$TRITON_HOME/.triton/cache"
-    export TRITON_CUPTI_INCLUDE_PATH="$CUDA_HOME/include"
-    export TRITON_CUPTI_LIB_PATH="$CUDA_HOME/lib64"
-    export TRITON_LIBDEVICE_PATH="$CUDA_HOME/nvvm/libdevice"
-    export TRITON_LIBCUDA_PATH="$CUDA_HOME/lib64"
-    export TRITON_PTXAS_PATH="$CUDA_HOME/bin/ptxas"
-    export TRITON_CUOBJDUMP_PATH="$CUDA_HOME/bin/cuobjdump"
-    export TRITON_NVDISASM_PATH="$CUDA_HOME/bin/nvdisasm"
-    export TRITON_WHEEL_NAME=pytorch-triton
-    export TRITON_WHEEL_VERSION_SUFFIX=".post${BUILD_NUMBER}"
-    export TRITON_BUILD_WITH_CCACHE=1 TRITON_PARALLEL_LINK_JOBS="$MAX_JOBS"
-    export TRITON_OFFLINE_BUILD=1 TRITON_BUILD_PROTON=0 TRITON_BUILD_UT=0
+    export TRITON_HOME TRITON_CACHE_DIR TRITON_CUPTI_INCLUDE_PATH TRITON_CUPTI_LIB_PATH
+    export TRITON_LIBDEVICE_PATH TRITON_LIBCUDA_PATH TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH
+    export TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX TRITON_BUILD_WITH_CCACHE TRITON_PARALLEL_LINK_JOBS
+    export TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
     run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
   stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl'
@@ -347,10 +360,13 @@ build_pytorch() {
     cd "$PYTORCH_SOURCE_DIR"
     [[ -f requirements-build.txt ]] && run_with_log "$PYTORCH_BUILD_LOG" uv pip install --python "$PYTHON" --require-hashes -r "$BUILD_CONSTRAINTS_FILE"
     export PYTORCH_BUILD_VERSION PYTORCH_BUILD_NUMBER="$BUILD_NUMBER"
-    export USE_NATIVE_ARCH=1 USE_CUDA=1 USE_CUDNN=1 USE_NCCL=1 USE_CUSPARSELT=1 USE_CUDSS=1
-    export USE_CUFILE=1 USE_MKLDNN=1 USE_OPENMP=1 USE_FLASH_ATTENTION=1 USE_MEM_EFF_ATTENTION=1
-    export USE_DISTRIBUTED=1 USE_XPU=0 USE_ROCM=0 FORCE_CUDA=1 BUILD_TEST=0
-    export CMAKE_BUILD_TYPE=Release CMAKE_POLICY_VERSION_MINIMUM=3.5
+    export USE_NATIVE_ARCH="$PYTORCH_USE_NATIVE_ARCH" USE_CUDA="$PYTORCH_USE_CUDA" USE_CUDNN="$PYTORCH_USE_CUDNN"
+    export USE_NCCL="$PYTORCH_USE_NCCL" USE_CUSPARSELT="$PYTORCH_USE_CUSPARSELT" USE_CUDSS="$PYTORCH_USE_CUDSS"
+    export USE_CUFILE="$PYTORCH_USE_CUFILE" USE_MKLDNN="$PYTORCH_USE_MKLDNN" USE_OPENMP="$PYTORCH_USE_OPENMP"
+    export USE_FLASH_ATTENTION="$PYTORCH_USE_FLASH_ATTENTION" USE_MEM_EFF_ATTENTION="$PYTORCH_USE_MEM_EFF_ATTENTION"
+    export USE_DISTRIBUTED="$PYTORCH_USE_DISTRIBUTED" USE_XPU="$PYTORCH_USE_XPU" USE_ROCM="$PYTORCH_USE_ROCM"
+    export FORCE_CUDA="$PYTORCH_FORCE_CUDA" BUILD_TEST="$PYTORCH_BUILD_TEST"
+    export CMAKE_BUILD_TYPE="$PYTORCH_CMAKE_BUILD_TYPE" CMAKE_POLICY_VERSION_MINIMUM="$PYTORCH_CMAKE_POLICY_VERSION_MINIMUM"
     run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
   stage_and_install_wheel PyTorch "$wheel_dir" 'torch-*.whl'
@@ -373,8 +389,8 @@ build_flash_attention() {
   run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip uninstall -y flash-attn flash-attn-4 || true
   run_with_log "$FLASH_ATTENTION_BUILD_LOG" uv pip install --python "$PYTHON" \
     --constraint "$constraints_file" \
-    'nvidia-cutlass-dsl[cu13]==4.6.0.dev0' einops typing_extensions \
-    'apache-tvm-ffi>=0.1.12,<0.2' torch-c-dlpack-ext 'quack-kernels>=0.5.3'
+    "$FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT" "$FLASH_ATTENTION_EINOPS_REQUIREMENT" "$FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT" \
+    "$FLASH_ATTENTION_TVM_FFI_REQUIREMENT" "$FLASH_ATTENTION_TORCH_C_DLPACK_REQUIREMENT" "$FLASH_ATTENTION_QUACK_KERNELS_REQUIREMENT"
   run_with_log "$FLASH_ATTENTION_BUILD_LOG" "$PYTHON" -m pip wheel \
     "$FLASH_ATTENTION_CUTE_SOURCE_DIR" --wheel-dir "$wheel_dir" \
     --no-build-isolation --no-deps
@@ -393,15 +409,17 @@ build_vision() {
 
   (
     cd "$VISION_SOURCE_DIR"
-    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip install 'pillow>=10.3.0' 'gdown>=4.7.3' scipy
+    run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip install "$VISION_PILLOW_REQUIREMENT" "$VISION_GDOWN_REQUIREMENT" "$VISION_SCIPY_REQUIREMENT"
     [[ -f requirements.txt ]] && run_with_log "$VISION_BUILD_LOG" uv pip install --python "$PYTHON" -r requirements.txt
     export BUILD_VERSION="${VISION_BUILD_VERSION}.post${BUILD_NUMBER}"
-    export USE_NATIVE_ARCH=1 USE_CUDA=1 USE_CUDNN=1 USE_XPU=0 USE_ROCM=0
-    export USE_GPU_VIDEO_DECODER=1 USE_CPU_VIDEO_DECODER=1
-    export TORCHVISION_USE_PNG=1 TORCHVISION_USE_JPEG=1 TORCHVISION_USE_WEBP=1 TORCHVISION_USE_NVJPEG=1
-    export FORCE_CUDA=1 BUILD_TEST=0 CMAKE_BUILD_TYPE=Release CMAKE_POLICY_VERSION_MINIMUM=3.5
-    export TORCHVISION_INCLUDE="${TORCHVISION_INCLUDE:-${NVCODEC_HOME}/include}"
-    export TORCHVISION_LIBRARY="${TORCHVISION_LIBRARY:-${NVCODEC_HOME}/lib}"
+    export USE_NATIVE_ARCH="$VISION_USE_NATIVE_ARCH" USE_CUDA="$VISION_USE_CUDA" USE_CUDNN="$VISION_USE_CUDNN"
+    export USE_XPU="$VISION_USE_XPU" USE_ROCM="$VISION_USE_ROCM"
+    export USE_GPU_VIDEO_DECODER="$VISION_USE_GPU_VIDEO_DECODER" USE_CPU_VIDEO_DECODER="$VISION_USE_CPU_VIDEO_DECODER"
+    export TORCHVISION_USE_PNG="$VISION_USE_PNG" TORCHVISION_USE_JPEG="$VISION_USE_JPEG"
+    export TORCHVISION_USE_WEBP="$VISION_USE_WEBP" TORCHVISION_USE_NVJPEG="$VISION_USE_NVJPEG"
+    export FORCE_CUDA="$VISION_FORCE_CUDA" BUILD_TEST="$VISION_BUILD_TEST"
+    export CMAKE_BUILD_TYPE="$VISION_CMAKE_BUILD_TYPE" CMAKE_POLICY_VERSION_MINIMUM="$VISION_CMAKE_POLICY_VERSION_MINIMUM"
+    export TORCHVISION_INCLUDE="$VISION_INCLUDE" TORCHVISION_LIBRARY="$VISION_LIBRARY"
     run_with_log "$VISION_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
   stage_and_install_wheel Torchvision "$wheel_dir" 'torchvision-*.whl'
@@ -420,7 +438,8 @@ build_audio() {
     cd "$AUDIO_SOURCE_DIR"
     [[ -f requirements.txt ]] && run_with_log "$AUDIO_BUILD_LOG" uv pip install --python "$PYTHON" -r requirements.txt
     export BUILD_VERSION="${AUDIO_BUILD_VERSION}.post${BUILD_NUMBER}"
-    export USE_CUDA=1 FORCE_CUDA=1 BUILD_TEST=0 CMAKE_BUILD_TYPE=Release
+    export USE_CUDA="$AUDIO_USE_CUDA" FORCE_CUDA="$AUDIO_FORCE_CUDA" BUILD_TEST="$AUDIO_BUILD_TEST"
+    export CMAKE_BUILD_TYPE="$AUDIO_CMAKE_BUILD_TYPE"
     run_with_log "$AUDIO_BUILD_LOG" "$PYTHON" -m pip wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
   stage_and_install_wheel Torchaudio "$wheel_dir" 'torchaudio-*.whl'
@@ -432,6 +451,7 @@ verify_all() {
   section "Final verification"
   "$PYTHON" - <<'PY'
 import sys
+import os
 from importlib import metadata
 from pathlib import Path
 import torch
@@ -483,9 +503,22 @@ x = torch.randn(10, 10, device="cuda")
 print("CUDA matrix multiplication norm:", (x @ x).norm().item())
 boxes = torch.tensor([[0, 0, 10, 10], [1, 1, 11, 11]], device="cuda", dtype=torch.float32)
 print("Torchvision CUDA NMS:", torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device="cuda"), 0.5).tolist())
-for dtype in (torch.float16, torch.bfloat16):
+dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16}
+dtype_names = os.environ["VERIFY_FA4_DTYPES"].split()
+assert dtype_names, "VERIFY_FA4_DTYPES must name at least one dtype"
+assert set(dtype_names).issubset(dtype_map), f"Unsupported FA4 dtypes: {dtype_names}"
+for dtype_name in dtype_names:
+    dtype = dtype_map[dtype_name]
     for causal in (False, True):
-        q = torch.randn(1, 32, 8, 64, device="cuda", dtype=dtype, requires_grad=True)
+        q = torch.randn(
+            int(os.environ["VERIFY_FA4_BATCH_SIZE"]),
+            int(os.environ["VERIFY_FA4_SEQUENCE_LENGTH"]),
+            int(os.environ["VERIFY_FA4_HEADS"]),
+            int(os.environ["VERIFY_FA4_HEAD_DIM"]),
+            device="cuda",
+            dtype=dtype,
+            requires_grad=True,
+        )
         k = torch.randn_like(q, requires_grad=True)
         v = torch.randn_like(q, requires_grad=True)
         output = flash_attn_func(q, k, v, causal=causal)
@@ -496,7 +529,12 @@ for dtype in (torch.float16, torch.bfloat16):
             v.detach().transpose(1, 2),
             is_causal=causal,
         ).transpose(1, 2)
-        torch.testing.assert_close(output.detach(), reference, rtol=2e-2, atol=2e-2)
+        torch.testing.assert_close(
+            output.detach(),
+            reference,
+            rtol=float(os.environ["VERIFY_FA4_RTOL"]),
+            atol=float(os.environ["VERIFY_FA4_ATOL"]),
+        )
         output.square().mean().backward()
         assert all(
             gradient is not None and torch.isfinite(gradient).all()

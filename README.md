@@ -27,9 +27,10 @@ its in-tree attention implementation. The standalone FA4 wheel is built from
    git submodule update --init --recursive
    ```
 
-2. Create or review the local `.env`. It defines source paths, CUDA/LLVM paths,
-   build versions, the project venv, and the root wheel directory. Do not
-   commit it.
+2. Create the local `.env` from `.env.example`, then review every value for the
+   host. Its commented sections group general lifecycle settings, source and
+   toolchain paths, component build switches, dependencies, and verification
+   parameters. Do not commit `.env`.
 
 3. Check shell syntax, then run the build:
 

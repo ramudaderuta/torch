@@ -6,8 +6,10 @@ description: Canonical technical architecture for isolated-wheel-build.
 
 ## Canonical Architecture
 
-`.env` supplies machine-specific directories, version inputs, `VENV_DIR`, and
-the constraints-file path. `build.sh` owns orchestration: it creates/validates
+`.env` supplies machine-specific directories, version inputs, `VENV_DIR`, the
+constraints-file path, and all component build/verification switches. Its
+commented sections are mirrored in the tracked, credential-free `.env.example`
+template. `build.sh` owns orchestration: it creates/validates
 `.venv`, configures CUDA, builds in dependency order, emits wheels into
 `dist/`, and installs selected wheels only into `.venv` for downstream builds.
 The ignored build tree holds generated temporary wheel staging and provenance

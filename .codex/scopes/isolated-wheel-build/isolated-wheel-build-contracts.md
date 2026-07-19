@@ -8,11 +8,15 @@ description: API and schema contracts for isolated-wheel-build.
 
 `build.sh` accepts no new positional API. It reads `.env`, creates the
 configured venv, and writes artifacts to the configured root `dist/` path.
+`.env.example` is the tracked, credential-free template; `.env` remains the
+only mutable runtime configuration source.
 
 ## Shared Types / Schemas
 
 `BUILD_CONSTRAINTS_FILE` is a pip/uv constraints file. `BUILD_NUMBER` is a
 non-negative integer. Vision and Audio final versions must parse as PEP 440.
+The local configuration groups general settings, source paths, toolchain,
+Triton, PyTorch, FA4, Torchvision, Torchaudio, and FA4 verification settings.
 
 ## Event and Streaming Contracts
 
