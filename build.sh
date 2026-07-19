@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Build local PyTorch, Triton, Flash Attention 4, Torchvision, and Torchaudio sources for CUDA.
+# Build local PyTorch, Triton, xFormers, Flash Attention 4, Torchvision, and Torchaudio sources for CUDA.
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly PATCH_DIR="${ROOT_DIR}/patches"
 readonly TRITON_DISTRIBUTION_NAME="pytorch-triton"
 readonly FA4_DISTRIBUTION_NAME="flash-attn-4"
-export TRITON_DISTRIBUTION_NAME FA4_DISTRIBUTION_NAME
+readonly XFORMERS_DISTRIBUTION_NAME="xformers"
+export TRITON_DISTRIBUTION_NAME FA4_DISTRIBUTION_NAME XFORMERS_DISTRIBUTION_NAME
 
 # Required local configuration. Keep this trusted shell-compatible KEY=VALUE file local.
 readonly ENV_FILE="${ROOT_DIR}/.env"
@@ -22,6 +23,7 @@ set +a
 MAIN_LOG="${ROOT_DIR}/${MAIN_LOG_FILE:-alltorch_build.log}"
 TRITON_BUILD_LOG="${ROOT_DIR}/${TRITON_BUILD_LOG_FILE:-triton_build.log}"
 PYTORCH_BUILD_LOG="${ROOT_DIR}/${PYTORCH_BUILD_LOG_FILE:-pytorch_build.log}"
+XFORMERS_BUILD_LOG="${ROOT_DIR}/${XFORMERS_BUILD_LOG_FILE:-xformers_build.log}"
 FLASH_ATTENTION_BUILD_LOG="${ROOT_DIR}/${FLASH_ATTENTION_BUILD_LOG_FILE:-flash_attention_build.log}"
 VISION_BUILD_LOG="${ROOT_DIR}/${VISION_BUILD_LOG_FILE:-vision_build.log}"
 AUDIO_BUILD_LOG="${ROOT_DIR}/${AUDIO_BUILD_LOG_FILE:-audio_build.log}"
@@ -59,8 +61,8 @@ on_error() {
   write_provenance "failed"
   if ((LOGS_INITIALIZED)); then
     printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" | tee -a "$MAIN_LOG" >&2
-    printf 'Logs: main=%s triton=%s pytorch=%s flash-attention=%s vision=%s audio=%s\n' \
-      "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
+    printf 'Logs: main=%s triton=%s pytorch=%s xformers=%s flash-attention=%s vision=%s audio=%s\n' \
+      "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
   else
     printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" >&2
   fi
@@ -81,7 +83,7 @@ die() {
 
 initialize_logs() {
   local log_file
-  for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
+  for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
     : >"$log_file"
   done
   LOGS_INITIALIZED=1
@@ -92,22 +94,23 @@ require_configuration() {
   local -a required_variables=(
     BUILD_NUMBER VENV_DIR PYTHON PYTHON_VERSION BUILD_CONSTRAINTS_FILE DIST_DIR MAX_JOBS USE_CLANG USE_CCACHE CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
     INSTALL_BUILD_PYTHON_DEPS PYTORCH_SOURCE_DIR VISION_SOURCE_DIR AUDIO_SOURCE_DIR
-    TRITON_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
+    TRITON_SOURCE_DIR XFORMERS_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
     CUDA_HOME MAGMA_ROOT OPENMPI_ROOT NVCODEC_HOME
     LLVM_CONFIG_PATH PYTORCH_BUILD_VERSION VISION_BUILD_VERSION
     AUDIO_BUILD_VERSION
-    MAIN_LOG_FILE TRITON_BUILD_LOG_FILE PYTORCH_BUILD_LOG_FILE FLASH_ATTENTION_BUILD_LOG_FILE VISION_BUILD_LOG_FILE AUDIO_BUILD_LOG_FILE
+    MAIN_LOG_FILE TRITON_BUILD_LOG_FILE PYTORCH_BUILD_LOG_FILE XFORMERS_BUILD_LOG_FILE FLASH_ATTENTION_BUILD_LOG_FILE VISION_BUILD_LOG_FILE AUDIO_BUILD_LOG_FILE
     BUILD_PKG_CONFIG_PREFIX GCC_COMMAND GXX_COMMAND CLANG_COMMAND CLANGXX_COMMAND CMAKE_COMMAND NINJA_COMMAND NVCC_COMMAND NVIDIA_SMI_COMMAND CCACHE_COMMAND
     TRITON_HOME TRITON_CACHE_DIR TRITON_CUPTI_INCLUDE_PATH TRITON_CUPTI_LIB_PATH TRITON_LIBDEVICE_PATH TRITON_LIBCUDA_PATH
     TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX
     TRITON_BUILD_WITH_CCACHE TRITON_PARALLEL_LINK_JOBS TRITON_OFFLINE_BUILD TRITON_BUILD_PROTON TRITON_BUILD_UT
-    XDG_CACHE_HOME UV_CACHE_DIR PIP_CACHE_DIR TMPDIR PYTHONPYCACHEPREFIX
+    XDG_CACHE_HOME UV_CACHE_DIR PIP_CACHE_DIR TMPDIR PYTHONPYCACHEPREFIX TORCH_EXTENSIONS_DIR
     PYTORCH_USE_NATIVE_ARCH PYTORCH_USE_CUDA PYTORCH_USE_CUDNN PYTORCH_USE_NCCL PYTORCH_USE_CUSPARSELT PYTORCH_CUSPARSELT_INCLUDE_DIR PYTORCH_CUSPARSELT_LIBRARY
     PYTORCH_USE_CUDSS
     PYTORCH_USE_CUFILE PYTORCH_USE_MKLDNN PYTORCH_USE_OPENMP PYTORCH_USE_FLASH_ATTENTION PYTORCH_USE_MEM_EFF_ATTENTION
     PYTORCH_USE_DISTRIBUTED PYTORCH_USE_XPU PYTORCH_USE_ROCM PYTORCH_FORCE_CUDA PYTORCH_BUILD_TEST PYTORCH_CMAKE_BUILD_TYPE PYTORCH_CMAKE_POLICY_VERSION_MINIMUM
     FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT FLASH_ATTENTION_EINOPS_REQUIREMENT FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT
     FLASH_ATTENTION_TVM_FFI_REQUIREMENT FLASH_ATTENTION_TORCH_C_DLPACK_REQUIREMENT FLASH_ATTENTION_QUACK_KERNELS_REQUIREMENT
+    XFORMERS_BUILD_TYPE XFORMERS_ENABLE_DEBUG_ASSERTIONS XFORMERS_ENABLE_TRITON XFORMERS_FORCE_DISABLE_TRITON
     VISION_PILLOW_REQUIREMENT VISION_GDOWN_REQUIREMENT VISION_SCIPY_REQUIREMENT VISION_USE_NATIVE_ARCH VISION_USE_CUDA VISION_USE_CUDNN VISION_USE_XPU VISION_USE_ROCM
     VISION_USE_GPU_VIDEO_DECODER VISION_USE_CPU_VIDEO_DECODER VISION_USE_PNG VISION_USE_JPEG VISION_USE_WEBP VISION_USE_NVJPEG
     VISION_FORCE_CUDA VISION_BUILD_TEST VISION_CMAKE_BUILD_TYPE VISION_CMAKE_POLICY_VERSION_MINIMUM VISION_INCLUDE VISION_LIBRARY
@@ -138,7 +141,7 @@ configure_project_local_paths() {
   local path_value
   local resolved_path
   local -a project_local_paths=(
-    TRITON_HOME TRITON_CACHE_DIR XDG_CACHE_HOME UV_CACHE_DIR PIP_CACHE_DIR TMPDIR PYTHONPYCACHEPREFIX
+    TRITON_HOME TRITON_CACHE_DIR XDG_CACHE_HOME UV_CACHE_DIR PIP_CACHE_DIR TMPDIR PYTHONPYCACHEPREFIX TORCH_EXTENSIONS_DIR
   )
 
   build_root="$(realpath -m -- "${ROOT_DIR}/.build")"
@@ -159,7 +162,7 @@ configure_project_local_paths() {
     || die "PYTHON must be the interpreter in VENV_DIR: ${VENV_DIR}/bin/python"
   [[ -z "${LLVM_SYSPATH:-}" ]] || die "LLVM_SYSPATH must be unset so Triton can obtain its pinned LLVM"
   [[ "$TRITON_OFFLINE_BUILD" == "0" ]] || die "TRITON_OFFLINE_BUILD must be 0 when Triton downloads its pinned LLVM"
-  mkdir -p "$TRITON_HOME" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME" "$UV_CACHE_DIR" "$PIP_CACHE_DIR" "$TMPDIR" "$PYTHONPYCACHEPREFIX"
+  mkdir -p "$TRITON_HOME" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME" "$UV_CACHE_DIR" "$PIP_CACHE_DIR" "$TMPDIR" "$PYTHONPYCACHEPREFIX" "$TORCH_EXTENSIONS_DIR"
 }
 
 log() {
@@ -251,6 +254,7 @@ stage_and_install_wheel() {
     || die "[$package_name] wheel metadata validation failed"
   printf '%s\t%s\t%s\n' "$package_name" "$wheel_metadata" "$(basename "${wheels[0]}")" >>"${ROOT_DIR}/.build/manifests/wheels.tsv"
   cp -f -- "${wheels[0]}" "$DIST_DIR/"
+  [[ -f "$DIST_DIR/$(basename "${wheels[0]}")" ]] || die "[$package_name] wheel was not retained in $DIST_DIR"
   # Reinstall even at an unchanged version so validation cannot reuse an older wheel.
   run_with_log "$MAIN_LOG" "$PYTHON" -m pip --isolated install --force-reinstall --no-deps "${wheels[0]}"
 }
@@ -435,7 +439,7 @@ preflight() {
 }
 
 build_triton() {
-  section "[1/5] Triton"
+  section "[1/6] Triton"
   require_source Triton "$TRITON_SOURCE_DIR"
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir triton)"
@@ -457,7 +461,7 @@ build_triton() {
 }
 
 build_pytorch() {
-  section "[2/5] PyTorch"
+  section "[2/6] PyTorch"
   require_source PyTorch "$PYTORCH_SOURCE_DIR"
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir pytorch)"
@@ -486,8 +490,28 @@ build_pytorch() {
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); torch.cuda.is_available() or exit('CUDA not enabled'); print(torch.cuda.get_device_name(0))" | tee -a "$MAIN_LOG"
 }
 
+build_xformers() {
+  section "[3/6] xFormers"
+  require_source xFormers "$XFORMERS_SOURCE_DIR"
+  require_directory "xFormers CUTLASS" "$XFORMERS_SOURCE_DIR/third_party/cutlass/include"
+  local wheel_dir
+  wheel_dir="$(prepare_wheel_dir xformers)"
+  run_with_log "$XFORMERS_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y xformers || true
+  clean_source xFormers "$XFORMERS_SOURCE_DIR"
+  apply_submodule_patch xFormers "$XFORMERS_SOURCE_DIR" "$PATCH_DIR/xformers/fa4-namespace-compat.patch"
+
+  (
+    cd "$XFORMERS_SOURCE_DIR"
+    export FORCE_CUDA="$PYTORCH_FORCE_CUDA" MAX_JOBS
+    export XFORMERS_BUILD_TYPE XFORMERS_ENABLE_DEBUG_ASSERTIONS XFORMERS_ENABLE_TRITON XFORMERS_FORCE_DISABLE_TRITON
+    run_with_log "$XFORMERS_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
+  )
+  stage_and_install_wheel xFormers "$wheel_dir" 'xformers-*.whl' "$XFORMERS_DISTRIBUTION_NAME"
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import xformers; print('xFormers:', xformers.__version__)" | tee -a "$MAIN_LOG"
+}
+
 build_flash_attention() {
-  section "[3/5] Flash Attention 4"
+  section "[4/6] Flash Attention 4"
   require_directory "Flash Attention 4" "$FLASH_ATTENTION_CUTE_SOURCE_DIR"
   local wheel_dir
   local constraints_dir="${ROOT_DIR}/.build/constraints"
@@ -514,7 +538,7 @@ build_flash_attention() {
 }
 
 build_vision() {
-  section "[4/5] Torchvision"
+  section "[5/6] Torchvision"
   require_source Torchvision "$VISION_SOURCE_DIR"
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir vision)"
@@ -541,7 +565,7 @@ build_vision() {
 }
 
 build_audio() {
-  section "[5/5] Torchaudio"
+  section "[6/6] Torchaudio"
   require_source Torchaudio "$AUDIO_SOURCE_DIR"
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir audio)"
@@ -578,9 +602,10 @@ main() {
   configure_project_local_paths
   initialize_logs
   preflight
-  # This entry point intentionally builds and verifies all five components.
+  # This entry point intentionally builds and verifies all six components.
   build_triton
   build_pytorch
+  build_xformers
   build_flash_attention
   build_vision
   build_audio
@@ -591,6 +616,7 @@ main() {
   log "Main log: $MAIN_LOG"
   log "Triton log: $TRITON_BUILD_LOG"
   log "PyTorch log: $PYTORCH_BUILD_LOG"
+  log "xFormers log: $XFORMERS_BUILD_LOG"
   log "Flash Attention log: $FLASH_ATTENTION_BUILD_LOG"
   log "Torchvision log: $VISION_BUILD_LOG"
   log "Torchaudio log: $AUDIO_BUILD_LOG"

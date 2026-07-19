@@ -1,7 +1,7 @@
 # Local PyTorch CUDA Build
 
 This repository orchestrates local CUDA source builds of PyTorch, Triton,
-Flash Attention 4, Torchvision, and Torchaudio. Upstream sources are Git
+xFormers, Flash Attention 4, Torchvision, and Torchaudio. Upstream sources are Git
 submodules; root scripts provide the supported local workflow.
 
 ## Layout
@@ -45,7 +45,7 @@ its in-tree attention implementation. The standalone FA4 wheel is built from
 there, and writes wheels to `dist/`. It may clean untracked files in source
 submodules when `CLEAN_BUILD=1`; review that setting before running it.
 
-The build order is Triton, PyTorch, FA4, Torchvision, then Torchaudio. The
+The build order is Triton, PyTorch, xFormers, FA4, Torchvision, then Torchaudio. The
 entry point always builds this complete set; it has no component-skip switches.
 Local wheels are installed into `.venv` only when a later component needs them
 to build. They are not installed into a system or user Python environment.
@@ -54,10 +54,12 @@ it invokes are under `scripts/` and receive the exported local configuration.
 The preflight rejects Python/pip prefix overrides and confines the configured
 Triton, pip, uv, XDG, temporary, and Python bytecode caches to `.build/`.
 Triton downloads its pinned LLVM there; this project rejects `LLVM_SYSPATH` to
-prevent an accidental host LLVM override.
+prevent an accidental host LLVM override. xFormers builds against the locally
+built Torch and Triton wheel with dependency resolution disabled, and its
+PyTorch extension cache is confined to `.build/torch-extensions`.
 
-The entry point detects the installed GPU architecture and builds all five
-components in this order: Triton, PyTorch, FA4, Torchvision, and Torchaudio.
+The entry point detects the installed GPU architecture and builds all six
+components in this order: Triton, PyTorch, xFormers, FA4, Torchvision, and Torchaudio.
 It validates wheel metadata, records provenance, and, when `VERIFY_INSTALL=1`,
 checks CUDA matmul, Torchvision CUDA NMS, and FA4 forward/backward execution.
 The current host configuration uses CUDA 13.3 and Clang 21. `MAX_JOBS` controls
@@ -68,7 +70,9 @@ Root-managed compatibility patches are applied only for the duration of a
 build and are removed on exit, including failure. The Clang 21 TensorPipe patch
 is always applied. The separate cuDSS API patch is applied only when
 `PYTORCH_USE_CUDSS=1`; cuDSS is currently disabled because cuDSS 0.8 does not
-support the SM120 CSR path on this host.
+support the SM120 CSR path on this host. The xFormers compatibility patch makes
+its optional FA2 probe tolerate the standalone FA4 `flash_attn` namespace; it
+then uses the PyTorch Flash backend instead of trying to load FA2.
 
 ## Updating sources
 
@@ -81,8 +85,10 @@ instead of being silently skipped.
 
 Public build versions in `.env` must match the corresponding source version
 files for PyTorch, Torchvision, and Torchaudio. A submodule commit advance does
-not require a version change when its source version is unchanged. Triton and
-FA4 derive their wheel versions from their upstream build metadata.
+not require a version change when its source version is unchanged. Triton,
+xFormers, and FA4 derive their wheel versions from their upstream build metadata.
+xFormers is pinned to public release `v0.0.35`: newer upstream `main` currently
+depends on an unavailable public `mslk` runtime module.
 
 ## Local outputs and cleanup
 
@@ -113,7 +119,7 @@ install the desired wheel files from `dist/`, for example:
 python -m pip install /path/to/torch/dist/torch-*.whl
 ```
 
-Install matching Torchvision and Torchaudio wheels after the local Torch wheel.
+Install matching xFormers, Torchvision, and Torchaudio wheels after the local Torch wheel.
 FA4 and standalone FA2 share the `flash_attn` namespace and must not be
 co-installed.
 

@@ -25,7 +25,7 @@ Notes:
   - 会更新当前分支对应的远端分支（REMOTE/<branch>）
   - 工作区有未提交改动会退出
   - detached HEAD 不支持（请先切回分支）
-  - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton（存在则更新，不存在则提示）
+  - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton/xformers（存在则更新，不存在则提示）
 EOF
 }
 
@@ -36,6 +36,7 @@ EXTRA_REPOS=(
   "audio|https://github.com/pytorch/audio"
   "flash-attention|https://github.com/Dao-AILab/flash-attention.git"
   "triton|https://github.com/openai/triton.git"
+  "xformers|https://github.com/facebookresearch/xformers.git"
 )
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -73,6 +74,13 @@ update_repo() {
   local branch
   branch="$(git symbolic-ref --short -q HEAD || true)"
   if [[ -z "$branch" ]]; then
+    local release_tag
+    release_tag="$(git describe --exact-match --tags 2>/dev/null || true)"
+    if [[ -n "$release_tag" ]]; then
+      echo "==> Skip: $repo_label is pinned at release tag $release_tag."
+      popd >/dev/null
+      return 0
+    fi
     echo "ERROR: $repo_label 处于 detached HEAD，无法更新远端分支。"
     echo "       Repo: $(git rev-parse --show-toplevel)"
     popd >/dev/null

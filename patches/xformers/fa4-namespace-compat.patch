@@ -1,0 +1,57 @@
+diff --git a/xformers/ops/fmha/flash.py b/xformers/ops/fmha/flash.py
+index 090b3ba8..b1af33e1 100644
+--- a/xformers/ops/fmha/flash.py
++++ b/xformers/ops/fmha/flash.py
+@@ -57,26 +57,30 @@ if importlib.util.find_spec("flash_attn"):
+ if importlib.util.find_spec("flash_attn"):
+-    import flash_attn
+-    import flash_attn.flash_attn_interface
+-
+-    if hasattr(flash_attn.flash_attn_interface, "flash_attn_cuda"):
+-        _flash_attn_cuda = flash_attn.flash_attn_interface.flash_attn_cuda
+-    else:
+-        _flash_attn_cuda = flash_attn.flash_attn_interface.flash_attn_gpu
+-
+-    FLASH_VERSION = flash_attn.__version__
+-    FLASH_VER_MIN = parse_version("2.7.1")
+-    FLASH_VER_LAST = parse_version("2.8.4")  # last supported, inclusive
+-    flash_ver_parsed = parse_version(FLASH_VERSION)
+-    if (
+-        flash_ver_parsed < FLASH_VER_MIN or flash_ver_parsed > FLASH_VER_LAST
+-    ) and os.environ.get("XFORMERS_IGNORE_FLASH_VERSION_CHECK", "0") != "1":
+-        raise ImportError(
+-            f"Requires Flash-Attention version >={FLASH_VER_MIN},"
+-            f"<={FLASH_VER_LAST} "
+-            f"but got {FLASH_VERSION}."
+-        )
+-
+-elif _TRY_PT_FLASH_ATTN:
++    try:
++        import flash_attn
++        import flash_attn.flash_attn_interface
++    except ModuleNotFoundError as error:
++        if error.name != "flash_attn.flash_attn_interface":
++            raise
++    else:
++        if hasattr(flash_attn.flash_attn_interface, "flash_attn_cuda"):
++            _flash_attn_cuda = flash_attn.flash_attn_interface.flash_attn_cuda
++        else:
++            _flash_attn_cuda = flash_attn.flash_attn_interface.flash_attn_gpu
++
++        FLASH_VERSION = flash_attn.__version__
++        FLASH_VER_MIN = parse_version("2.7.1")
++        FLASH_VER_LAST = parse_version("2.8.4")  # last supported, inclusive
++        flash_ver_parsed = parse_version(FLASH_VERSION)
++        if (
++            flash_ver_parsed < FLASH_VER_MIN or flash_ver_parsed > FLASH_VER_LAST
++        ) and os.environ.get("XFORMERS_IGNORE_FLASH_VERSION_CHECK", "0") != "1":
++            raise ImportError(
++                f"Requires Flash-Attention version >={FLASH_VER_MIN},"
++                f"<={FLASH_VER_LAST} "
++                f"but got {FLASH_VERSION}."
++            )
++
++if FLASH_VERSION == "0.0.0" and _TRY_PT_FLASH_ATTN:
+     ensure_pt_flash_ok()
+     FLASH_VERSION = torch.nn.attention._get_flash_version()  # type: ignore
+     _USE_PT_FLASH_ATTN = True

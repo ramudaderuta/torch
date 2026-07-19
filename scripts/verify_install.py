@@ -110,19 +110,36 @@ def verify_fa4(torch: ModuleType, flash_attn_func: object) -> None:
             )
 
 
+def verify_xformers(torch: ModuleType, memory_efficient_attention: object) -> None:
+    q = torch.randn(1, 16, 8, 64, device="cuda", dtype=torch.float16)
+    k = torch.randn_like(q)
+    v = torch.randn_like(q)
+    output = memory_efficient_attention(q, k, v)
+    if output.shape != q.shape:
+        raise RuntimeError(
+            f"xFormers CUDA attention shape mismatch: expected={tuple(q.shape)} actual={tuple(output.shape)}"
+        )
+    if not torch.isfinite(output).all():
+        raise RuntimeError("xFormers CUDA attention produced non-finite output")
+    print("xFormers CUDA attention:", tuple(output.shape), output.float().norm().item())
+
+
 def main() -> int:
     import flash_attn.cute as flash_attn_cute
     import torch
     import torchaudio
     import torchvision
     import triton
+    import xformers
     from flash_attn.cute import flash_attn_func
+    from xformers.ops import memory_efficient_attention
 
     root_dir = Path(__file__).resolve().parent.parent
-    source_roots = [root_dir / name for name in ("pytorch", "triton", "vision", "audio", "flash-attention")]
+    source_roots = [root_dir / name for name in ("pytorch", "triton", "xformers", "vision", "audio", "flash-attention")]
     print("Python:", sys.version)
     report_package("Triton", triton, os.environ["TRITON_DISTRIBUTION_NAME"], source_roots)
     report_package("PyTorch", torch, "torch", source_roots)
+    report_package("xFormers", xformers, os.environ["XFORMERS_DISTRIBUTION_NAME"], source_roots)
     report_package("Torchvision", torchvision, "torchvision", source_roots)
     report_package("Torchaudio", torchaudio, "torchaudio", source_roots)
     report_package(
@@ -148,6 +165,7 @@ def main() -> int:
     if not torch.isfinite(matmul).all():
         raise RuntimeError("CUDA matmul produced non-finite output")
     print("CUDA matrix multiplication norm:", matmul.norm().item())
+    verify_xformers(torch, memory_efficient_attention)
     boxes = torch.tensor([[0, 0, 10, 10], [1, 1, 11, 11]], device="cuda", dtype=torch.float32)
     nms_result = torchvision.ops.nms(boxes, torch.tensor([0.9, 0.8], device="cuda"), 0.5)
     if nms_result.tolist() != [0]:
