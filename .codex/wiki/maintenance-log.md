@@ -55,3 +55,10 @@ Append-only history for wiki updates caused by scope work, implementation closeo
 - Summary: Recorded CUDA 13.3 library verification, cuDSS 0.8 SM120 incompatibility, disabled backend, split patches, and build parallelism increase.
 - Pages: debugging/full-cuda-build-failures-2026-07-19.md
 - Verification: PyTorch rebuild; verify_install.py; cuDSS probe; wiki-note rebuild/lint/doctor
+
+## 2026-07-19T13:48:35Z [sageattention3-integration]
+
+- Summary: Corrected Triton libdevice configuration, added SageAttention3 deployment-runtime filtering and FP16 CUDA forward verification.
+- Pages: how-to/build-and-validation.md
+- Verification: HOME="$PWD/.build/home" CCACHE_DIR="$PWD/.build/ccache" ./build.sh
+- Residual risk: Validated on the local CUDA 13.3 / SM120 environment; deployment still requires matching local CUDA extension wheels.

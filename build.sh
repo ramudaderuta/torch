@@ -168,6 +168,7 @@ configure_project_local_paths() {
     || die "PYTHON must be the interpreter in VENV_DIR: ${VENV_DIR}/bin/python"
   [[ -z "${LLVM_SYSPATH:-}" ]] || die "LLVM_SYSPATH must be unset so Triton can obtain its pinned LLVM"
   [[ "$TRITON_OFFLINE_BUILD" == "0" ]] || die "TRITON_OFFLINE_BUILD must be 0 when Triton downloads its pinned LLVM"
+  [[ -f "$TRITON_LIBDEVICE_PATH" ]] || die "TRITON_LIBDEVICE_PATH must name a libdevice bitcode file: $TRITON_LIBDEVICE_PATH"
   mkdir -p "$TRITON_HOME" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME" "$UV_CACHE_DIR" "$PIP_CACHE_DIR" "$TMPDIR" "$PYTHONPYCACHEPREFIX" "$TORCH_EXTENSIONS_DIR"
 }
 

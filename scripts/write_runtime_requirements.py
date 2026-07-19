@@ -15,9 +15,16 @@ LOCAL_DISTRIBUTIONS = (
     "torch",
     "xformers",
     "flash-attn-4",
+    "sageattn3",
     "torchvision",
     "torchaudio",
 )
+
+# SageAttention3 declares these solely for setup.py's extension build. Its
+# installed Python package imports only Torch and the locally built Triton.
+BUILD_ONLY_REQUIREMENTS = {
+    "sageattn3": {"einops", "ninja", "packaging"},
+}
 
 
 def active_requirements(package_name: str) -> list[Requirement]:
@@ -55,7 +62,10 @@ def direct_runtime_requirements() -> dict[str, Requirement]:
             distribution(package_name)
         except PackageNotFoundError as error:
             raise RuntimeError(f"Required local distribution is not installed: {package_name}") from error
+        build_only = BUILD_ONLY_REQUIREMENTS.get(canonicalize_name(package_name), set())
         for requirement in active_requirements(package_name):
+            if canonicalize_name(requirement.name) in build_only:
+                continue
             merge_requirement(requirements, requirement)
 
     # The build always installs the CUDA 13 Cutlass extra. Keep only its major

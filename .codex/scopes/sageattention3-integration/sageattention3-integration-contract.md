@@ -20,7 +20,7 @@ description: Integrate the SageAttention3 Blackwell source build.
 ## Outcome
 
 - Done when: SageAttention is a pinned root submodule; `build.sh` builds SageAttention3 after local Torch and FA4; `update.sh` discovers the new checkout.
-- Runtime state: the SageAttention3 wheel is retained in `dist/`, installed in `.venv`, and verified by importing `sageattn3.sageattn3_blackwell`.
+- Runtime state: the SageAttention3 wheel is retained in `dist/`, installed in `.venv`, and verified by importing `sageattn3.sageattn3_blackwell` plus a finite FP16 CUDA forward pass.
 - Durable knowledge: upstream's nested CUTLASS download must occur only in a `.build/` staging copy. Every stage records a chained key containing its source state, relevant configuration, toolchain identity, and preceding stage key.
 
 ## Goals / Non-goals
@@ -90,3 +90,4 @@ Forbidden changes:
 
 - 2026-07-19: created single-contract scope, pinned upstream `main` at `d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5`, integrated the Blackwell-only build, and added chained incremental rebuild keys for all seven stages.
 - 2026-07-19: added `patches/sageattention3/cxx20-aten-compat.patch`; it applies only to the `.build` staging tree and is hashed into the SageAttention3 cache key.
+- 2026-07-19: corrected `TRITON_LIBDEVICE_PATH` to the `libdevice.10.bc` file, added SageAttention3 provenance and FP16 CUDA forward validation, and excluded its setup-only metadata dependencies from the deployment runtime manifest. The targeted final verification passed on the local CUDA 13.3 / SM120 environment.
