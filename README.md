@@ -45,6 +45,25 @@ its in-tree attention implementation. The standalone FA4 wheel is built from
 there, and writes wheels to `dist/`. It may clean untracked files in source
 submodules when `CLEAN_BUILD=1`; review that setting before running it.
 
+After a successful build, `dist/requirements-runtime.txt` records the direct
+runtime requirements declared by the locally built wheels, including the CUDA
+13 Cutlass runtime libraries required by FA4. It keeps upstream version ranges
+instead of freezing the build virtual environment and excludes local wheels,
+test, lint, and build tools. Install the matching local wheels first, then
+resolve this runtime manifest:
+
+```bash
+python -m pip install /path/to/torch/dist/torch-*.whl \
+  /path/to/torch/dist/pytorch_triton-*.whl \
+  /path/to/torch/dist/xformers-*.whl \
+  /path/to/torch/dist/flash_attn_4-*.whl
+python -m pip install \
+  -r /path/to/torch/dist/requirements-runtime.txt
+```
+
+The target must still use a compatible Python, CUDA driver, and local PyTorch
+ABI; this is particularly important for the xFormers CUDA extension.
+
 The build order is Triton, PyTorch, xFormers, FA4, Torchvision, then Torchaudio. The
 entry point always builds this complete set; it has no component-skip switches.
 Local wheels are installed into `.venv` only when a later component needs them

@@ -259,6 +259,14 @@ stage_and_install_wheel() {
   run_with_log "$MAIN_LOG" "$PYTHON" -m pip --isolated install --force-reinstall --no-deps "${wheels[0]}"
 }
 
+write_runtime_requirements() {
+  local requirements_file="${DIST_DIR}/requirements-runtime.txt"
+
+  section "Runtime requirements"
+  run_with_log "$MAIN_LOG" "$PYTHON" "$ROOT_DIR/scripts/write_runtime_requirements.py" "$requirements_file"
+  [[ -s "$requirements_file" ]] || die "Runtime requirements were not written: $requirements_file"
+}
+
 ensure_project_venv() {
   if [[ ! -x "$PYTHON" ]]; then
     [[ ! -e "$VENV_DIR" ]] || die "Project venv is incomplete: $VENV_DIR"
@@ -609,6 +617,7 @@ main() {
   build_flash_attention
   build_vision
   build_audio
+  write_runtime_requirements
   write_provenance "built"
   verify_all
   write_provenance "verified"
