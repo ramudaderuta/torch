@@ -98,7 +98,15 @@ then uses the PyTorch Flash backend instead of trying to load FA2.
 
 ## Updating sources
 
-Run `./update.sh` only when intentionally advancing upstream source trees.
+Run `./update.sh` only when intentionally advancing upstream source trees. It
+first reconciles clean nested submodules to their parent repository's locked
+commits, which prevents a prior parent update from appearing as a false dirty
+state. Git-ignored build outputs and generated `*.egg-info/` metadata do not
+block an update, while tracked or other non-ignored untracked source changes
+still do. If an upstream branch has intentionally
+rewritten history, review it first and then run `./update.sh --reset-on-divergence`;
+the script saves the prior local HEAD in an `update-backup/<timestamp>-<branch>`
+branch before resetting.
 Inspect the resulting root `git status` and submodule commits, then commit any
 intended gitlink changes before treating the revision as reproducible. Always
 rebuild after an update. Before compiling, `build.sh` verifies that each managed
