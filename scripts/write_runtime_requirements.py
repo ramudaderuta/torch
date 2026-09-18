@@ -15,16 +15,13 @@ LOCAL_DISTRIBUTIONS = (
     "torch",
     "xformers",
     "flash-attn-4",
-    "sageattn3",
     "torchvision",
     "torchaudio",
 )
 
-# SageAttention3 declares these solely for setup.py's extension build. Its
-# installed Python package imports only Torch and the locally built Triton.
-BUILD_ONLY_REQUIREMENTS = {
-    "sageattn3": {"einops", "ninja", "packaging"},
-}
+# Distributions whose setup.py-only dependencies must not reach the runtime
+# manifest.
+BUILD_ONLY_REQUIREMENTS: dict[str, set[str]] = {}
 
 
 def active_requirements(package_name: str) -> list[Requirement]:

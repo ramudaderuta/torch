@@ -26,8 +26,9 @@ Notes:
   - 会更新当前分支对应的远端分支（REMOTE/<branch>）
   - 有未提交的源码改动会退出；仅落后的嵌套子模块会自动检出到父仓库锁定提交
   - detached HEAD 不支持（请先切回分支）
+  - 浅克隆历史未覆盖 HEAD 导致误报 divergent 时，会自动按日期扩大历史（必要时 unshallow）后重查
   - --reset-on-divergence 仅用于上游已重写历史的确认场景；会先创建 update-backup/<timestamp> 备份分支，再重置到远端
-  - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton/xformers/sageattention（存在则更新，不存在则提示）
+  - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton/xformers（存在则更新，不存在则提示）
 EOF
 }
 
@@ -39,7 +40,6 @@ EXTRA_REPOS=(
   "flash-attention|https://github.com/Dao-AILab/flash-attention.git"
   "triton|https://github.com/openai/triton.git"
   "xformers|https://github.com/facebookresearch/xformers.git"
-  "sageattention|https://github.com/thu-ml/SageAttention.git"
 )
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -110,11 +110,37 @@ sync_submodules() {
   return 1
 }
 
+ensure_ancestry_decidable() {
+  local remote="$1"
+  local branch="$2"
+
+  git merge-base --is-ancestor HEAD "$remote/$branch" 2>/dev/null && return 0
+  [[ "$(git rev-parse --is-shallow-repository)" == "true" ]] || return 1
+
+  # A shallow fetch window can end before HEAD, which makes an ordinary
+  # behind-the-remote checkout look divergent. Widen the fetched history
+  # by date (then fully) and retest before declaring divergence. The
+  # extra objects are exactly the ones the fast-forward checkout needs.
+  local head_ts widen_ts widen_date
+  head_ts="$(git log -1 --format=%ct HEAD)"
+  echo "==> 浅历史未覆盖 HEAD；按日期扩大历史后重查祖先关系..."
+  for widen_ts in $((head_ts - 7 * 86400)) $((head_ts - 120 * 86400)); do
+    widen_date="$(date -u -d "@${widen_ts}" --iso-8601)"
+    if git fetch --shallow-since="$widen_date" "$remote" "$branch" 2>/dev/null; then
+      git merge-base --is-ancestor HEAD "$remote/$branch" && return 0
+    fi
+  done
+
+  echo "==> 仍需完整历史才能判定；执行 git fetch --unshallow ..."
+  git fetch --unshallow "$remote" "$branch" 2>/dev/null || return 1
+  git merge-base --is-ancestor HEAD "$remote/$branch"
+}
+
 update_repo() {
   local repo_path="$1"
   local repo_label="$2"
 
-  if [[ ! -d "$repo_path/.git" ]]; then
+  if [[ ! -e "$repo_path/.git" ]]; then
     echo "==> Skip: $repo_label ($repo_path) not found."
     return 0
   fi
@@ -173,7 +199,7 @@ update_repo() {
     return 1
   fi
   git fetch --depth "$DEPTH" "$REMOTE" "$branch"
-  if ! git merge-base --is-ancestor HEAD "$REMOTE/$branch"; then
+  if ! ensure_ancestry_decidable "$REMOTE" "$branch"; then
     if [[ "$RESET_ON_DIVERGENCE" != "1" ]]; then
       echo "ERROR: cannot fast-forward to $REMOTE/$branch; local history is divergent or unrelated."
       echo "       No reset was performed. Re-run with --reset-on-divergence only after reviewing the remote rewrite."
@@ -210,7 +236,7 @@ found_any_repo=0
 for entry in "${EXTRA_REPOS[@]}"; do
   name="${entry%%|*}"
   url="${entry#*|}"
-  if [[ -d "$PWD/$name/.git" ]]; then
+  if [[ -e "$PWD/$name/.git" ]]; then
     found_any_repo=1
     update_repo "$PWD/$name" "$name"
   else

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build local PyTorch, Triton, xFormers, Flash Attention 4, SageAttention3, Torchvision, and Torchaudio sources for CUDA.
+# Build local PyTorch, Triton, xFormers, Flash Attention 4, Torchvision, and Torchaudio sources for CUDA.
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -7,9 +7,7 @@ readonly PATCH_DIR="${ROOT_DIR}/patches"
 readonly TRITON_DISTRIBUTION_NAME="pytorch-triton"
 readonly FA4_DISTRIBUTION_NAME="flash-attn-4"
 readonly XFORMERS_DISTRIBUTION_NAME="xformers"
-readonly SAGEATTENTION3_DISTRIBUTION_NAME="sageattn3"
-readonly SAGEATTENTION3_PATCH_FILE="${PATCH_DIR}/sageattention3/cxx20-aten-compat.patch"
-export TRITON_DISTRIBUTION_NAME FA4_DISTRIBUTION_NAME XFORMERS_DISTRIBUTION_NAME SAGEATTENTION3_DISTRIBUTION_NAME
+export TRITON_DISTRIBUTION_NAME FA4_DISTRIBUTION_NAME XFORMERS_DISTRIBUTION_NAME
 
 # Required local configuration. Keep this trusted shell-compatible KEY=VALUE file local.
 readonly ENV_FILE="${ROOT_DIR}/.env"
@@ -27,7 +25,6 @@ TRITON_BUILD_LOG="${ROOT_DIR}/${TRITON_BUILD_LOG_FILE:-triton_build.log}"
 PYTORCH_BUILD_LOG="${ROOT_DIR}/${PYTORCH_BUILD_LOG_FILE:-pytorch_build.log}"
 XFORMERS_BUILD_LOG="${ROOT_DIR}/${XFORMERS_BUILD_LOG_FILE:-xformers_build.log}"
 FLASH_ATTENTION_BUILD_LOG="${ROOT_DIR}/${FLASH_ATTENTION_BUILD_LOG_FILE:-flash_attention_build.log}"
-SAGEATTENTION3_BUILD_LOG="${ROOT_DIR}/${SAGEATTENTION3_BUILD_LOG_FILE:-sageattention3_build.log}"
 VISION_BUILD_LOG="${ROOT_DIR}/${VISION_BUILD_LOG_FILE:-vision_build.log}"
 AUDIO_BUILD_LOG="${ROOT_DIR}/${AUDIO_BUILD_LOG_FILE:-audio_build.log}"
 
@@ -66,8 +63,8 @@ on_error() {
   write_provenance "failed"
   if ((LOGS_INITIALIZED)); then
     printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" | tee -a "$MAIN_LOG" >&2
-    printf 'Logs: main=%s triton=%s pytorch=%s xformers=%s flash-attention=%s sageattention3=%s vision=%s audio=%s\n' \
-      "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$SAGEATTENTION3_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
+    printf 'Logs: main=%s triton=%s pytorch=%s xformers=%s flash-attention=%s vision=%s audio=%s\n' \
+      "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
   else
     printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" >&2
   fi
@@ -88,7 +85,7 @@ die() {
 
 initialize_logs() {
   local log_file
-  for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$SAGEATTENTION3_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
+  for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
     : >"$log_file"
   done
   LOGS_INITIALIZED=1
@@ -99,11 +96,11 @@ require_configuration() {
   local -a required_variables=(
     BUILD_NUMBER VENV_DIR PYTHON PYTHON_VERSION BUILD_CONSTRAINTS_FILE DIST_DIR MAX_JOBS USE_CLANG USE_CCACHE CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
     INSTALL_BUILD_PYTHON_DEPS PYTORCH_SOURCE_DIR VISION_SOURCE_DIR AUDIO_SOURCE_DIR
-    TRITON_SOURCE_DIR XFORMERS_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR SAGEATTENTION_SOURCE_DIR SAGEATTENTION3_SOURCE_DIR
+    TRITON_SOURCE_DIR XFORMERS_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
     CUDA_HOME MAGMA_ROOT OPENMPI_ROOT NVCODEC_HOME
     LLVM_CONFIG_PATH PYTORCH_BUILD_VERSION VISION_BUILD_VERSION
     AUDIO_BUILD_VERSION
-    MAIN_LOG_FILE TRITON_BUILD_LOG_FILE PYTORCH_BUILD_LOG_FILE XFORMERS_BUILD_LOG_FILE FLASH_ATTENTION_BUILD_LOG_FILE SAGEATTENTION3_BUILD_LOG_FILE VISION_BUILD_LOG_FILE AUDIO_BUILD_LOG_FILE
+    MAIN_LOG_FILE TRITON_BUILD_LOG_FILE PYTORCH_BUILD_LOG_FILE XFORMERS_BUILD_LOG_FILE FLASH_ATTENTION_BUILD_LOG_FILE VISION_BUILD_LOG_FILE AUDIO_BUILD_LOG_FILE
     BUILD_PKG_CONFIG_PREFIX GCC_COMMAND GXX_COMMAND CLANG_COMMAND CLANGXX_COMMAND CMAKE_COMMAND NINJA_COMMAND NVCC_COMMAND NVIDIA_SMI_COMMAND CCACHE_COMMAND
     TRITON_HOME TRITON_CACHE_DIR TRITON_CUPTI_INCLUDE_PATH TRITON_CUPTI_LIB_PATH TRITON_LIBDEVICE_PATH TRITON_LIBCUDA_PATH
     TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX
@@ -115,7 +112,6 @@ require_configuration() {
     PYTORCH_USE_DISTRIBUTED PYTORCH_USE_XPU PYTORCH_USE_ROCM PYTORCH_FORCE_CUDA PYTORCH_BUILD_TEST PYTORCH_CMAKE_BUILD_TYPE PYTORCH_CMAKE_POLICY_VERSION_MINIMUM
     FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT FLASH_ATTENTION_EINOPS_REQUIREMENT FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT
     FLASH_ATTENTION_TVM_FFI_REQUIREMENT FLASH_ATTENTION_TORCH_C_DLPACK_REQUIREMENT FLASH_ATTENTION_QUACK_KERNELS_REQUIREMENT
-    SAGEATTENTION3_EXT_PARALLEL
     XFORMERS_BUILD_TYPE XFORMERS_ENABLE_DEBUG_ASSERTIONS XFORMERS_ENABLE_TRITON XFORMERS_FORCE_DISABLE_TRITON
     VISION_PILLOW_REQUIREMENT VISION_GDOWN_REQUIREMENT VISION_SCIPY_REQUIREMENT VISION_USE_NATIVE_ARCH VISION_USE_CUDA VISION_USE_CUDNN VISION_USE_XPU VISION_USE_ROCM
     VISION_USE_GPU_VIDEO_DECODER VISION_USE_CPU_VIDEO_DECODER VISION_USE_PNG VISION_USE_JPEG VISION_USE_WEBP VISION_USE_NVJPEG
@@ -465,9 +461,37 @@ print_environment() {
   git --version | tee -a "$MAIN_LOG"
 }
 
+validate_lockfile() {
+  local lock_file="$BUILD_CONSTRAINTS_FILE"
+  local input_file="${BUILD_CONSTRAINTS_FILE%.lock}.in"
+  local pytorch_build_reqs="$PYTORCH_SOURCE_DIR/requirements-build.txt"
+
+  [[ -f "$lock_file" ]] || die "Build lock file is missing: $lock_file"
+  [[ -f "$input_file" ]] || die "Build lock input file is missing: $input_file"
+
+  local stale=0
+  if [[ "$input_file" -nt "$lock_file" ]]; then
+    stale=1
+    log "[lockfile] $input_file is newer than $lock_file"
+  fi
+  if [[ -f "$pytorch_build_reqs" && "$pytorch_build_reqs" -nt "$lock_file" ]]; then
+    stale=1
+    log "[lockfile] $pytorch_build_reqs is newer than $lock_file"
+  fi
+
+  if [[ "$stale" -eq 1 ]]; then
+    log "[lockfile] regenerating $lock_file from $input_file"
+    run_with_log "$MAIN_LOG" uv pip compile --python "$PYTHON" \
+      --generate-hashes --no-strip-extras --output-file "$lock_file" "$input_file" \
+      || die "Failed to regenerate build lock file: $lock_file"
+    log "[lockfile] regeneration complete"
+  fi
+}
+
 preflight() {
   require_cmd uv
   ensure_project_venv
+  validate_lockfile
   [[ -f "$BUILD_CONSTRAINTS_FILE" ]] || die "Build constraints are unavailable: $BUILD_CONSTRAINTS_FILE"
   mkdir -p "$DIST_DIR" "${ROOT_DIR}/.build/manifests"
   : >"${ROOT_DIR}/.build/manifests/wheels.tsv"
@@ -500,7 +524,7 @@ preflight() {
 }
 
 build_triton() {
-  section "[1/7] Triton"
+  section "[1/6] Triton"
   require_source Triton "$TRITON_SOURCE_DIR"
   if component_cache_hit triton "$TRITON_SOURCE_DIR" \
     "$TRITON_WHEEL_NAME|$TRITON_WHEEL_VERSION_SUFFIX|$TRITON_BUILD_WITH_CCACHE|$TRITON_PARALLEL_LINK_JOBS|$TRITON_BUILD_PROTON|$TRITON_BUILD_UT" \
@@ -528,7 +552,7 @@ build_triton() {
 }
 
 build_pytorch() {
-  section "[2/7] PyTorch"
+  section "[2/6] PyTorch"
   require_source PyTorch "$PYTORCH_SOURCE_DIR"
   if component_cache_hit pytorch "$PYTORCH_SOURCE_DIR" \
     "$BUILD_NUMBER|$PYTORCH_BUILD_VERSION|$PYTORCH_USE_NATIVE_ARCH|$PYTORCH_USE_CUDA|$PYTORCH_USE_CUDNN|$PYTORCH_USE_NCCL|$PYTORCH_USE_CUSPARSELT|$PYTORCH_USE_CUDSS|$PYTORCH_USE_CUFILE|$PYTORCH_USE_MKLDNN|$PYTORCH_USE_OPENMP|$PYTORCH_USE_FLASH_ATTENTION|$PYTORCH_USE_MEM_EFF_ATTENTION|$PYTORCH_USE_DISTRIBUTED|$PYTORCH_CMAKE_BUILD_TYPE" \
@@ -539,7 +563,7 @@ build_pytorch() {
   wheel_dir="$(prepare_wheel_dir pytorch)"
   run_with_log "$PYTORCH_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y torch || true
   clean_source PyTorch "$PYTORCH_SOURCE_DIR"
-  apply_submodule_patch PyTorch "$PYTORCH_SOURCE_DIR" "$PATCH_DIR/pytorch/cuda-13-clang21-compat.patch"
+  # apply_submodule_patch PyTorch "$PYTORCH_SOURCE_DIR" "$PATCH_DIR/pytorch/cuda-13-clang21-compat.patch"  #已合并到上游 PyTorch（commit 297314309d），补丁上下文失效
   if [[ "$PYTORCH_USE_CUDSS" == "1" ]]; then
     apply_submodule_patch PyTorch "$PYTORCH_SOURCE_DIR" "$PATCH_DIR/pytorch/cudss-0.8-api-compat.patch"
   fi
@@ -564,7 +588,7 @@ build_pytorch() {
 }
 
 build_xformers() {
-  section "[3/7] xFormers"
+  section "[3/6] xFormers"
   require_source xFormers "$XFORMERS_SOURCE_DIR"
   require_directory "xFormers CUTLASS" "$XFORMERS_SOURCE_DIR/third_party/cutlass/include"
   if component_cache_hit xformers "$XFORMERS_SOURCE_DIR" \
@@ -590,7 +614,7 @@ build_xformers() {
 }
 
 build_flash_attention() {
-  section "[4/7] Flash Attention 4"
+  section "[4/6] Flash Attention 4"
   require_directory "Flash Attention 4" "$FLASH_ATTENTION_CUTE_SOURCE_DIR"
   if component_cache_hit flash-attention-4 "$FLASH_ATTENTION_SOURCE_DIR" \
     "$FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT|$FLASH_ATTENTION_EINOPS_REQUIREMENT|$FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT|$FLASH_ATTENTION_TVM_FFI_REQUIREMENT|$FLASH_ATTENTION_TORCH_C_DLPACK_REQUIREMENT|$FLASH_ATTENTION_QUACK_KERNELS_REQUIREMENT" \
@@ -622,44 +646,8 @@ build_flash_attention() {
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "from flash_attn.cute import flash_attn_func; print('Flash Attention 4 import verified:', flash_attn_func)" | tee -a "$MAIN_LOG"
 }
 
-prepare_sageattention3_source() {
-  local staging_dir="${ROOT_DIR}/.build/sources/sageattention3"
-
-  rm -rf -- "$staging_dir"
-  mkdir -p "$staging_dir"
-  git -C "$SAGEATTENTION_SOURCE_DIR" archive --format=tar HEAD:sageattention3_blackwell | tar -x -C "$staging_dir"
-  [[ -f "$SAGEATTENTION3_PATCH_FILE" ]] || die "[SageAttention3] required patch is unavailable: $SAGEATTENTION3_PATCH_FILE"
-  git -C "$ROOT_DIR" apply --check --directory=.build/sources/sageattention3 "$SAGEATTENTION3_PATCH_FILE" \
-    || die "[SageAttention3] patch does not match staged source: $SAGEATTENTION3_PATCH_FILE"
-  git -C "$ROOT_DIR" apply --directory=.build/sources/sageattention3 "$SAGEATTENTION3_PATCH_FILE"
-  printf '%s\n' "$staging_dir"
-}
-
-build_sageattention3() {
-  section "[5/7] SageAttention3 (Blackwell)"
-  require_source SageAttention3 "$SAGEATTENTION3_SOURCE_DIR"
-  if component_cache_hit sageattention3 "$SAGEATTENTION_SOURCE_DIR" "$SAGEATTENTION3_EXT_PARALLEL|$(sha256sum "$SAGEATTENTION3_PATCH_FILE")" \
-    'from sageattn3 import sageattn3_blackwell'; then
-    return
-  fi
-  local wheel_dir
-  local staging_dir
-
-  wheel_dir="$(prepare_wheel_dir sageattention3)"
-  staging_dir="$(prepare_sageattention3_source)"
-  run_with_log "$SAGEATTENTION3_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y "$SAGEATTENTION3_DISTRIBUTION_NAME" || true
-  (
-    cd "$staging_dir"
-    export MAX_JOBS="$SAGEATTENTION3_EXT_PARALLEL"
-    run_with_log "$SAGEATTENTION3_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
-  )
-  stage_and_install_wheel SageAttention3 "$wheel_dir" 'sageattn3-*.whl' "$SAGEATTENTION3_DISTRIBUTION_NAME"
-  component_build_complete sageattention3 'from sageattn3 import sageattn3_blackwell'
-  "$PYTHON" -c 'from sageattn3 import sageattn3_blackwell; print("SageAttention3:", sageattn3_blackwell)' | tee -a "$MAIN_LOG"
-}
-
 build_vision() {
-  section "[6/7] Torchvision"
+  section "[5/6] Torchvision"
   require_source Torchvision "$VISION_SOURCE_DIR"
   if component_cache_hit vision "$VISION_SOURCE_DIR" \
     "$BUILD_NUMBER|$VISION_BUILD_VERSION|$VISION_PILLOW_REQUIREMENT|$VISION_GDOWN_REQUIREMENT|$VISION_SCIPY_REQUIREMENT|$VISION_USE_NATIVE_ARCH|$VISION_USE_CUDA|$VISION_USE_CUDNN|$VISION_USE_GPU_VIDEO_DECODER|$VISION_USE_CPU_VIDEO_DECODER|$VISION_USE_PNG|$VISION_USE_JPEG|$VISION_USE_WEBP|$VISION_USE_NVJPEG|$VISION_FORCE_CUDA|$VISION_CMAKE_BUILD_TYPE" \
@@ -692,7 +680,7 @@ build_vision() {
 }
 
 build_audio() {
-  section "[7/7] Torchaudio"
+  section "[6/6] Torchaudio"
   require_source Torchaudio "$AUDIO_SOURCE_DIR"
   if component_cache_hit audio "$AUDIO_SOURCE_DIR" \
     "$BUILD_NUMBER|$AUDIO_BUILD_VERSION|$AUDIO_USE_CUDA|$AUDIO_FORCE_CUDA|$AUDIO_BUILD_TEST|$AUDIO_CMAKE_BUILD_TYPE" \
@@ -735,12 +723,11 @@ main() {
   configure_project_local_paths
   initialize_logs
   preflight
-  # This entry point intentionally builds and verifies all seven components.
+  # This entry point intentionally builds and verifies all six components.
   build_triton
   build_pytorch
   build_xformers
   build_flash_attention
-  build_sageattention3
   build_vision
   build_audio
   write_runtime_requirements
@@ -753,7 +740,6 @@ main() {
   log "PyTorch log: $PYTORCH_BUILD_LOG"
   log "xFormers log: $XFORMERS_BUILD_LOG"
   log "Flash Attention log: $FLASH_ATTENTION_BUILD_LOG"
-  log "SageAttention3 log: $SAGEATTENTION3_BUILD_LOG"
   log "Torchvision log: $VISION_BUILD_LOG"
   log "Torchaudio log: $AUDIO_BUILD_LOG"
 }
