@@ -1,0 +1,16 @@
+diff --git a/setup.py b/setup.py
+--- a/setup.py
++++ b/setup.py
+@@ -9,7 +9,6 @@
+ import argparse
+ import logging
+ import os
+-import pprint
+ import re
+ import subprocess
+ import sys
+@@ -714,4 +714,1 @@
+-        # Print the environment variables
+-        print(f"[SETUP.PY] Environment variables: {pprint.pformat(dict(os.environ))}")
+-
+         package_name = build.package_name()

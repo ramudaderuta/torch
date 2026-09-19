@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build local PyTorch, Triton, xFormers, Flash Attention 4, Torchvision, and Torchaudio sources for CUDA.
+# Build local PyTorch, Triton, MSLK, xFormers, Flash Attention 4, Torchvision, and Torchaudio sources for CUDA.
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -25,6 +25,7 @@ TRITON_BUILD_LOG="${ROOT_DIR}/${TRITON_BUILD_LOG_FILE:-triton_build.log}"
 PYTORCH_BUILD_LOG="${ROOT_DIR}/${PYTORCH_BUILD_LOG_FILE:-pytorch_build.log}"
 XFORMERS_BUILD_LOG="${ROOT_DIR}/${XFORMERS_BUILD_LOG_FILE:-xformers_build.log}"
 FLASH_ATTENTION_BUILD_LOG="${ROOT_DIR}/${FLASH_ATTENTION_BUILD_LOG_FILE:-flash_attention_build.log}"
+MSLK_BUILD_LOG="${ROOT_DIR}/${MSLK_BUILD_LOG_FILE:-mslk_build.log}"
 VISION_BUILD_LOG="${ROOT_DIR}/${VISION_BUILD_LOG_FILE:-vision_build.log}"
 AUDIO_BUILD_LOG="${ROOT_DIR}/${AUDIO_BUILD_LOG_FILE:-audio_build.log}"
 
@@ -63,8 +64,8 @@ on_error() {
   write_provenance "failed"
   if ((LOGS_INITIALIZED)); then
     printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" | tee -a "$MAIN_LOG" >&2
-    printf 'Logs: main=%s triton=%s pytorch=%s xformers=%s flash-attention=%s vision=%s audio=%s\n' \
-      "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
+    printf 'Logs: main=%s triton=%s pytorch=%s mslk=%s xformers=%s flash-attention=%s vision=%s audio=%s\n' \
+      "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$MSLK_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG" | tee -a "$MAIN_LOG" >&2
   else
     printf 'ERROR: stage=%s line=%s exit=%s command=%q\n' "$CURRENT_STAGE" "$line_number" "$exit_code" "$command" >&2
   fi
@@ -85,7 +86,7 @@ die() {
 
 initialize_logs() {
   local log_file
-  for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
+  for log_file in "$MAIN_LOG" "$TRITON_BUILD_LOG" "$PYTORCH_BUILD_LOG" "$MSLK_BUILD_LOG" "$XFORMERS_BUILD_LOG" "$FLASH_ATTENTION_BUILD_LOG" "$VISION_BUILD_LOG" "$AUDIO_BUILD_LOG"; do
     : >"$log_file"
   done
   LOGS_INITIALIZED=1
@@ -94,13 +95,14 @@ initialize_logs() {
 require_configuration() {
   local variable
   local -a required_variables=(
-    BUILD_NUMBER VENV_DIR PYTHON PYTHON_VERSION BUILD_CONSTRAINTS_FILE DIST_DIR MAX_JOBS USE_CLANG USE_CCACHE CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
+    BUILD_NUMBER VENV_DIR PYTHON PYTHON_VERSION BUILD_CONSTRAINTS_FILE DIST_DIR MAX_JOBS MSLK_MAX_JOBS USE_CLANG USE_CCACHE CLEAR_PIP_CACHE CLEAN_BUILD VERIFY_INSTALL
     INSTALL_BUILD_PYTHON_DEPS PYTORCH_SOURCE_DIR VISION_SOURCE_DIR AUDIO_SOURCE_DIR
-    TRITON_SOURCE_DIR XFORMERS_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
+    TRITON_SOURCE_DIR MSLK_SOURCE_DIR XFORMERS_SOURCE_DIR FLASH_ATTENTION_SOURCE_DIR FLASH_ATTENTION_CUTE_SOURCE_DIR
+    MSLK_PACKAGE_NAME
     CUDA_HOME MAGMA_ROOT OPENMPI_ROOT NVCODEC_HOME
     LLVM_CONFIG_PATH PYTORCH_BUILD_VERSION VISION_BUILD_VERSION
     AUDIO_BUILD_VERSION
-    MAIN_LOG_FILE TRITON_BUILD_LOG_FILE PYTORCH_BUILD_LOG_FILE XFORMERS_BUILD_LOG_FILE FLASH_ATTENTION_BUILD_LOG_FILE VISION_BUILD_LOG_FILE AUDIO_BUILD_LOG_FILE
+    MAIN_LOG_FILE TRITON_BUILD_LOG_FILE PYTORCH_BUILD_LOG_FILE MSLK_BUILD_LOG_FILE XFORMERS_BUILD_LOG_FILE FLASH_ATTENTION_BUILD_LOG_FILE VISION_BUILD_LOG_FILE AUDIO_BUILD_LOG_FILE
     BUILD_PKG_CONFIG_PREFIX GCC_COMMAND GXX_COMMAND CLANG_COMMAND CLANGXX_COMMAND CMAKE_COMMAND NINJA_COMMAND NVCC_COMMAND NVIDIA_SMI_COMMAND CCACHE_COMMAND
     TRITON_HOME TRITON_CACHE_DIR TRITON_CUPTI_INCLUDE_PATH TRITON_CUPTI_LIB_PATH TRITON_LIBDEVICE_PATH TRITON_LIBCUDA_PATH
     TRITON_PTXAS_PATH TRITON_CUOBJDUMP_PATH TRITON_NVDISASM_PATH TRITON_WHEEL_NAME TRITON_WHEEL_VERSION_SUFFIX
@@ -328,7 +330,7 @@ ensure_project_venv() {
 validate_versions() {
   [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || die "BUILD_NUMBER must be a non-negative integer"
   local variable
-  for variable in MAX_JOBS VERIFY_FA4_BATCH_SIZE VERIFY_FA4_SEQUENCE_LENGTH VERIFY_FA4_HEADS VERIFY_FA4_HEAD_DIM VERIFY_FA4_MAX_TENSOR_ELEMENTS; do
+  for variable in MAX_JOBS MSLK_MAX_JOBS VERIFY_FA4_BATCH_SIZE VERIFY_FA4_SEQUENCE_LENGTH VERIFY_FA4_HEADS VERIFY_FA4_HEAD_DIM VERIFY_FA4_MAX_TENSOR_ELEMENTS; do
     [[ "${!variable}" =~ ^[1-9][0-9]*$ ]] || die "$variable must be a positive integer"
   done
   "$PYTHON" "$ROOT_DIR/scripts/validate_build_config.py" || die "Configured build validation is invalid"
@@ -428,7 +430,7 @@ configure_cuda_architectures() {
 
 check_system_dependencies() {
   local -a packages=(
-    build-essential ninja-build gcc clang-21 ccache cmake git pkg-config
+    build-essential ninja-build gcc clang-21 ccache cmake git pkg-config patchelf
     cudnn9-cuda-13 cudss nvshmem libnccl-dev cutensor-cuda-13 cusparselt-cuda-13
     libopenblas-dev liblapack-dev libomp-21-dev intel-mkl-full
     libprotobuf-dev protobuf-compiler zlib1g-dev libssl-dev
@@ -497,6 +499,7 @@ preflight() {
   : >"${ROOT_DIR}/.build/manifests/wheels.tsv"
   require_cmd git
   require_cmd tar
+  require_cmd patchelf
   require_cmd "$CMAKE_COMMAND"
   require_cmd "$NINJA_COMMAND"
   require_cmd "$GCC_COMMAND"
@@ -524,11 +527,11 @@ preflight() {
 }
 
 build_triton() {
-  section "[1/6] Triton"
+  section "[1/7] Triton"
   require_source Triton "$TRITON_SOURCE_DIR"
   if component_cache_hit triton "$TRITON_SOURCE_DIR" \
     "$TRITON_WHEEL_NAME|$TRITON_WHEEL_VERSION_SUFFIX|$TRITON_BUILD_WITH_CCACHE|$TRITON_PARALLEL_LINK_JOBS|$TRITON_BUILD_PROTON|$TRITON_BUILD_UT" \
-    'import triton'; then
+    'import importlib.metadata as metadata; metadata.version("pytorch-triton"); import triton; import triton.language'; then
     return
   fi
   local wheel_dir
@@ -547,12 +550,12 @@ build_triton() {
     run_with_log "$TRITON_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir
   )
   stage_and_install_wheel Triton "$wheel_dir" 'pytorch_triton*.whl' "$TRITON_DISTRIBUTION_NAME"
-  component_build_complete triton 'import triton'
+  component_build_complete triton 'import importlib.metadata as metadata; metadata.version("pytorch-triton"); import triton; import triton.language'
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import triton; print('Triton:', triton.__version__)" | tee -a "$MAIN_LOG"
 }
 
 build_pytorch() {
-  section "[2/6] PyTorch"
+  section "[2/7] PyTorch"
   require_source PyTorch "$PYTORCH_SOURCE_DIR"
   if component_cache_hit pytorch "$PYTORCH_SOURCE_DIR" \
     "$BUILD_NUMBER|$PYTORCH_BUILD_VERSION|$PYTORCH_USE_NATIVE_ARCH|$PYTORCH_USE_CUDA|$PYTORCH_USE_CUDNN|$PYTORCH_USE_NCCL|$PYTORCH_USE_CUSPARSELT|$PYTORCH_USE_CUDSS|$PYTORCH_USE_CUFILE|$PYTORCH_USE_MKLDNN|$PYTORCH_USE_OPENMP|$PYTORCH_USE_FLASH_ATTENTION|$PYTORCH_USE_MEM_EFF_ATTENTION|$PYTORCH_USE_DISTRIBUTED|$PYTORCH_CMAKE_BUILD_TYPE" \
@@ -587,20 +590,65 @@ build_pytorch() {
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import torch; print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda); torch.cuda.is_available() or exit('CUDA not enabled'); print(torch.cuda.get_device_name(0))" | tee -a "$MAIN_LOG"
 }
 
+build_mslk() {
+  section "[3/7] MSLK"
+  require_source MSLK "$MSLK_SOURCE_DIR"
+  # Initialize the CUTLASS headers before any check or cache decision so a
+  # fresh clone and a cache-hit rerun observe the same tree.
+  run_with_log "$MSLK_BUILD_LOG" git -C "$MSLK_SOURCE_DIR" submodule update --init external/cutlass
+  require_directory "MSLK CUTLASS" "$MSLK_SOURCE_DIR/external/cutlass/include"
+  apply_submodule_patch MSLK "$MSLK_SOURCE_DIR" "$PATCH_DIR/mslk/fa4-namespace-compat.patch"
+  apply_submodule_patch MSLK "$MSLK_SOURCE_DIR" "$PATCH_DIR/mslk/no-environment-dump.patch"
+  if component_cache_hit mslk "$MSLK_SOURCE_DIR" \
+    "$MSLK_PACKAGE_NAME|$MSLK_MAX_JOBS" \
+    'import mslk; import mslk.attention.fmha.flash'; then
+    return
+  fi
+  local wheel_dir
+  wheel_dir="$(prepare_wheel_dir mslk)"
+  run_with_log "$MSLK_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y mslk || true
+  clean_source MSLK "$MSLK_SOURCE_DIR"
+  (
+    cd "$MSLK_SOURCE_DIR"
+    run_with_log "$MSLK_BUILD_LOG" uv pip install --python "$PYTHON" \
+      'setuptools_git_versioning>=3.0.0' scikit-build tabulate
+    export CUDA_BIN_PATH="$CUDA_HOME" CUDACXX="$CUDA_HOME/bin/nvcc"
+    export MSLK_PACKAGE_NAME
+    # scikit-build ignores CC/CXX; force the project toolchain because the
+    # locally built Torch (compiled with Clang 21) exports Clang-only
+    # interface flags such as -fclang-abi-compat=17. The CUDA host compiler
+    # must follow, or nvcc defaults to GCC and rejects those same flags.
+    export CMAKE_ARGS="-DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX"
+    export CMAKE_BUILD_PARALLEL_LEVEL="$MSLK_MAX_JOBS"
+    # MSLK's CMake never forwards CMAKE_CUDA_HOST_COMPILER to nvcc as -ccbin,
+    # leaving nvcc's default GCC host to choke on Torch's Clang-only flags.
+    # NVCC_PREPEND_FLAGS is read by nvcc itself, so the host pin cannot be
+    # dropped by the build system.
+    export NVCC_PREPEND_FLAGS="-ccbin $(command -v "$CXX")"
+    run_with_log "$MSLK_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-deps
+  )
+  stage_and_install_wheel MSLK "$wheel_dir" 'mslk-*.whl' mslk
+  component_build_complete mslk 'import mslk; import mslk.attention.fmha.flash'
+  [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import mslk; print('MSLK:', getattr(mslk, '__version__', 'unknown'))" | tee -a "$MAIN_LOG"
+}
+
 build_xformers() {
-  section "[3/6] xFormers"
+  section "[4/7] xFormers"
   require_source xFormers "$XFORMERS_SOURCE_DIR"
   require_directory "xFormers CUTLASS" "$XFORMERS_SOURCE_DIR/third_party/cutlass/include"
+  # MSLK provides xFormers' FMHA implementation; the two form one compatibility
+  # unit, so the MSLK commit participates in the xFormers cache fingerprint.
+  local mslk_git_sha
+  mslk_git_sha="$(git -C "$MSLK_SOURCE_DIR" rev-parse HEAD)"
   if component_cache_hit xformers "$XFORMERS_SOURCE_DIR" \
-    "$PYTORCH_FORCE_CUDA|$XFORMERS_BUILD_TYPE|$XFORMERS_ENABLE_DEBUG_ASSERTIONS|$XFORMERS_ENABLE_TRITON|$XFORMERS_FORCE_DISABLE_TRITON" \
-    'import xformers'; then
+    "$mslk_git_sha|$PYTORCH_FORCE_CUDA|$XFORMERS_BUILD_TYPE|$XFORMERS_ENABLE_DEBUG_ASSERTIONS|$XFORMERS_ENABLE_TRITON|$XFORMERS_FORCE_DISABLE_TRITON" \
+    'import xformers; import xformers.ops.fmha'; then
     return
   fi
   local wheel_dir
   wheel_dir="$(prepare_wheel_dir xformers)"
   run_with_log "$XFORMERS_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y xformers || true
   clean_source xFormers "$XFORMERS_SOURCE_DIR"
-  apply_submodule_patch xFormers "$XFORMERS_SOURCE_DIR" "$PATCH_DIR/xformers/fa4-namespace-compat.patch"
 
   (
     cd "$XFORMERS_SOURCE_DIR"
@@ -609,12 +657,12 @@ build_xformers() {
     run_with_log "$XFORMERS_BUILD_LOG" "$PYTHON" -m pip --isolated wheel . -v --wheel-dir "$wheel_dir" --no-build-isolation --no-cache-dir --no-deps
   )
   stage_and_install_wheel xFormers "$wheel_dir" 'xformers-*.whl' "$XFORMERS_DISTRIBUTION_NAME"
-  component_build_complete xformers 'import xformers'
+  component_build_complete xformers 'import xformers; import xformers.ops.fmha'
   [[ "$VERIFY_INSTALL" != "1" ]] || "$PYTHON" -c "import xformers; print('xFormers:', xformers.__version__)" | tee -a "$MAIN_LOG"
 }
 
 build_flash_attention() {
-  section "[4/6] Flash Attention 4"
+  section "[5/7] Flash Attention 4"
   require_directory "Flash Attention 4" "$FLASH_ATTENTION_CUTE_SOURCE_DIR"
   if component_cache_hit flash-attention-4 "$FLASH_ATTENTION_SOURCE_DIR" \
     "$FLASH_ATTENTION_CUTLASS_DSL_REQUIREMENT|$FLASH_ATTENTION_EINOPS_REQUIREMENT|$FLASH_ATTENTION_TYPING_EXTENSIONS_REQUIREMENT|$FLASH_ATTENTION_TVM_FFI_REQUIREMENT|$FLASH_ATTENTION_TORCH_C_DLPACK_REQUIREMENT|$FLASH_ATTENTION_QUACK_KERNELS_REQUIREMENT" \
@@ -647,7 +695,7 @@ build_flash_attention() {
 }
 
 build_vision() {
-  section "[5/6] Torchvision"
+  section "[6/7] Torchvision"
   require_source Torchvision "$VISION_SOURCE_DIR"
   if component_cache_hit vision "$VISION_SOURCE_DIR" \
     "$BUILD_NUMBER|$VISION_BUILD_VERSION|$VISION_PILLOW_REQUIREMENT|$VISION_GDOWN_REQUIREMENT|$VISION_SCIPY_REQUIREMENT|$VISION_USE_NATIVE_ARCH|$VISION_USE_CUDA|$VISION_USE_CUDNN|$VISION_USE_GPU_VIDEO_DECODER|$VISION_USE_CPU_VIDEO_DECODER|$VISION_USE_PNG|$VISION_USE_JPEG|$VISION_USE_WEBP|$VISION_USE_NVJPEG|$VISION_FORCE_CUDA|$VISION_CMAKE_BUILD_TYPE" \
@@ -680,7 +728,7 @@ build_vision() {
 }
 
 build_audio() {
-  section "[6/6] Torchaudio"
+  section "[7/7] Torchaudio"
   require_source Torchaudio "$AUDIO_SOURCE_DIR"
   if component_cache_hit audio "$AUDIO_SOURCE_DIR" \
     "$BUILD_NUMBER|$AUDIO_BUILD_VERSION|$AUDIO_USE_CUDA|$AUDIO_FORCE_CUDA|$AUDIO_BUILD_TEST|$AUDIO_CMAKE_BUILD_TYPE" \
@@ -723,9 +771,13 @@ main() {
   configure_project_local_paths
   initialize_logs
   preflight
-  # This entry point intentionally builds and verifies all six components.
+  # This entry point intentionally builds and verifies all seven components.
+  # MSLK provides xFormers' FMHA implementation, so it builds after PyTorch
+  # (native kernels link against the locally installed Torch) and before
+  # xFormers (whose FMHA API re-exports MSLK symbols).
   build_triton
   build_pytorch
+  build_mslk
   build_xformers
   build_flash_attention
   build_vision
@@ -738,6 +790,7 @@ main() {
   log "Main log: $MAIN_LOG"
   log "Triton log: $TRITON_BUILD_LOG"
   log "PyTorch log: $PYTORCH_BUILD_LOG"
+  log "MSLK log: $MSLK_BUILD_LOG"
   log "xFormers log: $XFORMERS_BUILD_LOG"
   log "Flash Attention log: $FLASH_ATTENTION_BUILD_LOG"
   log "Torchvision log: $VISION_BUILD_LOG"

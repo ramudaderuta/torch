@@ -16,3 +16,7 @@
 [submodule "xformers"]
 	path = xformers
 	url = https://github.com/facebookresearch/xformers.git
+[submodule "mslk"]
+	path = mslk
+	url = https://github.com/meta-pytorch/MSLK.git
+	branch = main

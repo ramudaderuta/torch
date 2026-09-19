@@ -20,7 +20,7 @@ Usage:
   $(basename "$0") [--repo /path/to/repo] [--depth N] [--jobs N] [--remote origin] [--reset-on-divergence]
 
 Env overrides:
-  DEPTH=50 JOBS=16 REMOTE=origin RESET_ON_DIVERGENCE=1 $(basename "$0")
+  DEPTH=50 JOBS=8 REMOTE=origin RESET_ON_DIVERGENCE=1 $(basename "$0")
 
 Notes:
   - 会更新当前分支对应的远端分支（REMOTE/<branch>）
@@ -28,7 +28,7 @@ Notes:
   - detached HEAD 不支持（请先切回分支）
   - 浅克隆历史未覆盖 HEAD 导致误报 divergent 时，会自动按日期扩大历史（必要时 unshallow）后重查
   - --reset-on-divergence 仅用于上游已重写历史的确认场景；会先创建 update-backup/<timestamp> 备份分支，再重置到远端
-  - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton/xformers（存在则更新，不存在则提示）
+  - 若当前目录包含 ./pytorch，将额外尝试更新 vision/audio/flash-attention/triton/mslk/xformers（存在则更新，不存在则提示）
 EOF
 }
 
@@ -39,6 +39,7 @@ EXTRA_REPOS=(
   "audio|https://github.com/pytorch/audio"
   "flash-attention|https://github.com/Dao-AILab/flash-attention.git"
   "triton|https://github.com/openai/triton.git"
+  "mslk|https://github.com/meta-pytorch/MSLK.git"
   "xformers|https://github.com/facebookresearch/xformers.git"
 )
 while [[ $# -gt 0 ]]; do

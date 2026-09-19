@@ -126,6 +126,7 @@ def verify_xformers(torch: ModuleType, memory_efficient_attention: object) -> No
 
 def main() -> int:
     import flash_attn.cute as flash_attn_cute
+    import mslk
     import torch
     import torchaudio
     import torchvision
@@ -135,10 +136,11 @@ def main() -> int:
     from xformers.ops import memory_efficient_attention
 
     root_dir = Path(__file__).resolve().parent.parent
-    source_roots = [root_dir / name for name in ("pytorch", "triton", "xformers", "vision", "audio", "flash-attention")]
+    source_roots = [root_dir / name for name in ("pytorch", "triton", "mslk", "xformers", "vision", "audio", "flash-attention")]
     print("Python:", sys.version)
     report_package("Triton", triton, os.environ["TRITON_DISTRIBUTION_NAME"], source_roots)
     report_package("PyTorch", torch, "torch", source_roots)
+    report_package("MSLK", mslk, "mslk", source_roots)
     report_package("xFormers", xformers, os.environ["XFORMERS_DISTRIBUTION_NAME"], source_roots)
     report_package("Torchvision", torchvision, "torchvision", source_roots)
     report_package("Torchaudio", torchaudio, "torchaudio", source_roots)

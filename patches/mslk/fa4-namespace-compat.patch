@@ -1,0 +1,8 @@
+diff --git a/mslk/attention/fmha/flash.py b/mslk/attention/fmha/flash.py
+--- a/mslk/attention/fmha/flash.py
++++ b/mslk/attention/fmha/flash.py
+@@ -57,3 +57,3 @@
+-if importlib.util.find_spec("flash_attn"):
++if importlib.util.find_spec("flash_attn.flash_attn_interface"):
+     # In fbcode this resolves to ai_codesign's flash_attn_2_cuda;
+     # in OSS this path is not expected to be used.

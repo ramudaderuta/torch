@@ -13,6 +13,7 @@ from packaging.utils import canonicalize_name
 LOCAL_DISTRIBUTIONS = (
     "pytorch-triton",
     "torch",
+    "mslk",
     "xformers",
     "flash-attn-4",
     "torchvision",
@@ -54,6 +55,10 @@ def merge_requirement(requirements: dict[str, Requirement], requirement: Require
 
 def direct_runtime_requirements() -> dict[str, Requirement]:
     requirements: dict[str, Requirement] = {}
+    # Local wheels are installed from dist/ before this manifest is resolved,
+    # so cross-references between them (for example xFormers requiring MSLK)
+    # must never appear here and pull a public build over the local wheel.
+    local_names = {canonicalize_name(name) for name in LOCAL_DISTRIBUTIONS}
     for package_name in LOCAL_DISTRIBUTIONS:
         try:
             distribution(package_name)
@@ -61,7 +66,7 @@ def direct_runtime_requirements() -> dict[str, Requirement]:
             raise RuntimeError(f"Required local distribution is not installed: {package_name}") from error
         build_only = BUILD_ONLY_REQUIREMENTS.get(canonicalize_name(package_name), set())
         for requirement in active_requirements(package_name):
-            if canonicalize_name(requirement.name) in build_only:
+            if canonicalize_name(requirement.name) in build_only or canonicalize_name(requirement.name) in local_names:
                 continue
             merge_requirement(requirements, requirement)
 
