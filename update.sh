@@ -94,6 +94,13 @@ sync_submodules() {
   [[ -f .gitmodules ]] || return 0
 
   git submodule sync --recursive
+  # Upstream branch renames into a sub-namespace (foo -> foo/bar) leave stale
+  # remote-tracking refs that make the submodule fetch fail with a
+  # directory/file ref-lock error ("cannot lock ref ... exists"). Prune them
+  # first so a plain fetch can create the new namespace.
+  REMOTE="$REMOTE" git submodule foreach --quiet --recursive '
+    git remote prune "$REMOTE" >/dev/null 2>&1 || true
+  ' >/dev/null 2>&1 || true
   if git submodule update --init --recursive --depth "$DEPTH" --jobs "$JOBS"; then
     return 0
   fi
