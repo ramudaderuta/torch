@@ -636,12 +636,16 @@ build_xformers() {
   section "[4/7] xFormers"
   require_source xFormers "$XFORMERS_SOURCE_DIR"
   require_directory "xFormers CUTLASS" "$XFORMERS_SOURCE_DIR/third_party/cutlass/include"
+  local compatibility_patch="$PATCH_DIR/xformers/setuptools-scm-build-py-class.patch"
+  [[ -f "$compatibility_patch" ]] || die "[xFormers] required patch is unavailable: $compatibility_patch"
+  local compatibility_patch_sha
+  compatibility_patch_sha="$(sha256sum "$compatibility_patch" | awk '{print $1}')"
   # MSLK provides xFormers' FMHA implementation; the two form one compatibility
   # unit, so the MSLK commit participates in the xFormers cache fingerprint.
   local mslk_git_sha
   mslk_git_sha="$(git -C "$MSLK_SOURCE_DIR" rev-parse HEAD)"
   if component_cache_hit xformers "$XFORMERS_SOURCE_DIR" \
-    "$mslk_git_sha|$PYTORCH_FORCE_CUDA|$XFORMERS_BUILD_TYPE|$XFORMERS_ENABLE_DEBUG_ASSERTIONS|$XFORMERS_ENABLE_TRITON|$XFORMERS_FORCE_DISABLE_TRITON" \
+    "$mslk_git_sha|$compatibility_patch_sha|$PYTORCH_FORCE_CUDA|$XFORMERS_BUILD_TYPE|$XFORMERS_ENABLE_DEBUG_ASSERTIONS|$XFORMERS_ENABLE_TRITON|$XFORMERS_FORCE_DISABLE_TRITON" \
     'import xformers; import xformers.ops.fmha'; then
     return
   fi
@@ -649,6 +653,7 @@ build_xformers() {
   wheel_dir="$(prepare_wheel_dir xformers)"
   run_with_log "$XFORMERS_BUILD_LOG" "$PYTHON" -m pip --isolated uninstall -y xformers || true
   clean_source xFormers "$XFORMERS_SOURCE_DIR"
+  apply_submodule_patch xFormers "$XFORMERS_SOURCE_DIR" "$compatibility_patch"
 
   (
     cd "$XFORMERS_SOURCE_DIR"

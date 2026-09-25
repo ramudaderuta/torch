@@ -1,0 +1,19 @@
+--- a/setup.py
++++ b/setup.py
+@@ -311,10 +311,11 @@
+         # Same trick as torch's BuildExtension, which setuptools' commands
+         # don't provide: setuptools instantiates the cmdclass itself, so bind
+         # our arguments here.
+-        def init_with_options(*args, **kwargs):
+-            return cls(*args, **{**kwargs, **options})
+-
++        class BuildPyWithOptions(cls):
++            def __init__(self, *args, **kwargs):
++                super().__init__(*args, **{**kwargs, **options})
++
+-        return init_with_options
++        return BuildPyWithOptions
+-
++
+     def __init__(self, *args, **kwargs) -> None:
+         self.extra_files: Dict[str, str] = kwargs.pop("extra_files")
